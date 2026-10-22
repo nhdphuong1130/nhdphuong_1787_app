@@ -219,6 +219,18 @@ class ChildService {
     }
   }
 
+  // 6b. Máy con kiểm tra trạng thái ghép nối realtime bằng PairingCode
+  static Future<Map<String, dynamic>?> checkPairStatus(String pairingCode) async {
+    try {
+      final url = '${ConfigUrl.cleanApiUrl(ConfigUrl.baseUrl)}ChildProfileApi/check-pair/${pairingCode.trim()}';
+      final response = await ApiClient.get(url);
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   // 7. Đăng nhập bằng tài khoản do phụ huynh cấp cho bé
   static Future<Map<String, dynamic>> kidLogin({
     required String username,
