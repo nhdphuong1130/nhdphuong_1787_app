@@ -24,9 +24,6 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   Timer? _refreshTimer;
   int _mapStyleIndex = 0; // 0: Google Standard, 1: Google Satellite, 2: CARTO Voyager, 3: OpenStreetMap
 
-  // Điểm trường học an toàn mặc định (Trường Tiểu học - TP.HCM)
-  final LatLng _safeZoneCenter = const LatLng(10.762622, 106.660172);
-
   String get _tileUrl {
     switch (_mapStyleIndex) {
       case 1:
@@ -87,6 +84,12 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
         setState(() {
           _children = updated;
         });
+        if (_selectedChildIndex < _children.length) {
+          final c = _children[_selectedChildIndex];
+          if (c.lastKnownLat != 0.0 && c.lastKnownLng != 0.0) {
+            _mapController.move(LatLng(c.lastKnownLat, c.lastKnownLng), _mapController.camera.zoom);
+          }
+        }
       }
     } catch (_) {}
   }
@@ -127,28 +130,7 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
     }
   }
 
-  void _simulateMovement() {
-    if (_children.isEmpty) return;
-    setState(() {
-      final child = _children[_selectedChildIndex];
-      // Tự dịch chuyển nhẹ tọa độ GPS (mô phỏng bé đang đi bộ)
-      child.lastKnownLat += (0.0005 * (child.lastKnownLat > 10.763 ? -1 : 1));
-      child.lastKnownLng += (0.0004 * (child.lastKnownLng > 106.661 ? -1 : 1));
-      _mapController.move(
-        LatLng(child.lastKnownLat, child.lastKnownLng),
-        16.0,
-      );
-    });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '📍 Đã cập nhật tọa độ GPS mới cho ${_children[_selectedChildIndex].fullName}: (${_children[_selectedChildIndex].lastKnownLat.toStringAsFixed(6)}, ${_children[_selectedChildIndex].lastKnownLng.toStringAsFixed(6)})',
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -160,7 +142,11 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
     }
 
     final activeChild = _children[_selectedChildIndex];
-    final childLocation = LatLng(activeChild.lastKnownLat, activeChild.lastKnownLng);
+    final bool hasValidGps = activeChild.lastKnownLat != 0.0 && activeChild.lastKnownLng != 0.0;
+    // Tọa độ hiển thị: nếu bé đã có GPS thật thì căn theo bé, nếu chưa thì tạm lấy trung tâm mặc định
+    final childLocation = hasValidGps
+        ? LatLng(activeChild.lastKnownLat, activeChild.lastKnownLng)
+        : const LatLng(10.8231, 106.6297);
 
     return Scaffold(
       appBar: AppBar(
@@ -237,14 +223,17 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
             tooltip: 'Cập nhật từ máy con',
             onPressed: () async {
               await _reloadFromApi();
-              _mapController.move(LatLng(activeChild.lastKnownLat, activeChild.lastKnownLng), 16.0);
+              if (activeChild.lastKnownLat != 0.0 && activeChild.lastKnownLng != 0.0) {
+                _mapController.move(LatLng(activeChild.lastKnownLat, activeChild.lastKnownLng), 16.0);
+              }
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.my_location),
-            tooltip: 'Căn giữa vị trí bé',
-            onPressed: () => _mapController.move(childLocation, 16.0),
-          ),
+          if (hasValidGps)
+            IconButton(
+              icon: const Icon(Icons.my_location),
+              tooltip: 'Căn giữa vị trí bé',
+              onPressed: () => _mapController.move(childLocation, 16.0),
+            ),
         ],
       ),
       body: Stack(
@@ -253,7 +242,7 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
             mapController: _mapController,
             options: MapOptions(
               initialCenter: childLocation,
-              initialZoom: 15.5,
+              initialZoom: hasValidGps ? 16.0 : 13.0,
             ),
             children: [
               TileLayer(
@@ -263,62 +252,102 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                 userAgentPackageName: 'com.nhdphuong1787.nhdphuong_1787_app',
                 maxZoom: 20,
               ),
-              // Vòng tròn Vùng An Toàn (Geofencing Safe Zone - 500m)
-              CircleLayer(
-                circles: [
-                  CircleMarker(
-                    point: _safeZoneCenter,
-                    color: Colors.blue.withValues(alpha: 0.15),
-                    borderColor: Colors.blueAccent,
-                    borderStrokeWidth: 2,
-                    useRadiusInMeter: true,
-                    radius: 500, // 500 mét quanh trường học
-                  ),
-                ],
-              ),
-              // Marker hiển thị vị trí bé
-              MarkerLayer(
-                markers: [
-                  Marker(
-                    point: childLocation,
-                    width: 70,
-                    height: 70,
-                    child: Column(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            activeChild.fullName,
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.redAccent, width: 3),
-                            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
-                          ),
-                          child: Text(
-                            activeChild.avatarUrl == 'girl' ? '👧' : '👦',
-                            style: const TextStyle(fontSize: 22),
-                          ),
-                        ),
-                      ],
+              // Vòng tròn Vùng An Toàn quanh vị trí GPS thực tế của bé (500m)
+              if (hasValidGps)
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: childLocation,
+                      color: Colors.blue.withValues(alpha: 0.15),
+                      borderColor: Colors.blueAccent,
+                      borderStrokeWidth: 2,
+                      useRadiusInMeter: true,
+                      radius: 500, // 500 mét an toàn quanh vị trí thật của bé
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              // Marker hiển thị vị trí bé
+              if (hasValidGps)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: childLocation,
+                      width: 70,
+                      height: 70,
+                      child: Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.black87,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              activeChild.fullName,
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.redAccent, width: 3),
+                              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                            ),
+                            child: Text(
+                              activeChild.avatarUrl == 'girl' ? '👧' : '👦',
+                              style: const TextStyle(fontSize: 22),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
 
-          // Thanh điều khiển dưới cùng
+          // Cảnh báo nếu chưa nhận được tín hiệu GPS thật
+          if (!hasValidGps)
+            Positioned(
+              top: 16,
+              left: 16,
+              right: 16,
+              child: Card(
+                color: Colors.amber.shade100,
+                elevation: 4,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.satellite_alt_rounded, color: Colors.orange, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Đang chờ tín hiệu GPS từ máy bé ${activeChild.fullName}...',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87),
+                            ),
+                            const Text(
+                              'Hãy mở màn hình Chế độ Bé trên thiết bị con để kích hoạt định vị GPS tự động.',
+                              style: TextStyle(fontSize: 11, color: Colors.black54),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+          // Thanh thông tin trạng thái GPS thật dưới cùng
           Positioned(
             left: 16,
             right: 16,
@@ -333,12 +362,22 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.security, color: Colors.blueAccent),
+                        Icon(
+                          hasValidGps ? Icons.circle : Icons.sensors,
+                          color: hasValidGps ? Colors.green : Colors.orange,
+                          size: 16,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Vùng an toàn (500m): Trường Tiểu học',
-                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.blue[900]),
+                            hasValidGps
+                                ? 'Định vị GPS Trực tiếp (Live Stream)'
+                                : 'Đang dò tìm vệ tinh GPS...',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: hasValidGps ? Colors.green.shade800 : Colors.orange.shade800,
+                            ),
                           ),
                         ),
                         Chip(
@@ -346,6 +385,28 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                           backgroundColor: Colors.green[50],
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.pin_drop, size: 16, color: Colors.blueAccent),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              hasValidGps
+                                  ? 'Tọa độ: ${activeChild.lastKnownLat.toStringAsFixed(6)}, ${activeChild.lastKnownLng.toStringAsFixed(6)}'
+                                  : 'Tọa độ: Chưa có tín hiệu GPS',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -366,27 +427,35 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                                 if (idx != null) {
                                   setState(() => _selectedChildIndex = idx);
                                   final c = _children[idx];
-                                  _mapController.move(LatLng(c.lastKnownLat, c.lastKnownLng), 16.0);
+                                  if (c.lastKnownLat != 0.0 && c.lastKnownLng != 0.0) {
+                                    _mapController.move(LatLng(c.lastKnownLat, c.lastKnownLng), 16.0);
+                                  }
                                 }
                               },
                             ),
                           ),
-                        const SizedBox(width: 8),
-                        FilledButton.tonalIcon(
-                          onPressed: () => MapUtils.openGoogleMaps(
-                            activeChild.lastKnownLat,
-                            activeChild.lastKnownLng,
-                            label: 'Bé ${activeChild.fullName}',
+                        if (_children.length > 1) const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: hasValidGps
+                                ? () => MapUtils.openGoogleMaps(
+                                      activeChild.lastKnownLat,
+                                      activeChild.lastKnownLng,
+                                      label: 'Bé ${activeChild.fullName}',
+                                    )
+                                : null,
+                            icon: const Icon(Icons.near_me_rounded, size: 18),
+                            label: const Text('Bật Google Maps'),
                           ),
-                          icon: const Icon(Icons.near_me_rounded, size: 18),
-                          label: const Text('Bật Google Maps'),
                         ),
-                        const SizedBox(width: 8),
-                        FilledButton.icon(
-                          onPressed: _simulateMovement,
-                          icon: const Icon(Icons.directions_walk, size: 18),
-                          label: const Text('Mô Phỏng Di Chuyển'),
-                        ),
+                        if (hasValidGps) ...[
+                          const SizedBox(width: 8),
+                          IconButton.filledTonal(
+                            tooltip: 'Căn giữa vị trí bé',
+                            onPressed: () => _mapController.move(childLocation, 16.0),
+                            icon: const Icon(Icons.center_focus_strong, size: 20),
+                          ),
+                        ],
                       ],
                     ),
                   ],

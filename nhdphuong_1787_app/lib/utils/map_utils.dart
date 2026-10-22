@@ -8,9 +8,12 @@ class MapUtils {
     double lng, {
     String? label,
   }) async {
-    // Tọa độ hợp lệ mặc định nếu tọa độ là 0
-    final validLat = (lat != 0.0) ? lat : 10.762622;
-    final validLng = (lng != 0.0) ? lng : 106.660172;
+    if (lat == 0.0 && lng == 0.0) {
+      debugPrint('Chưa có tọa độ GPS hợp lệ từ máy bé');
+      return false;
+    }
+    final validLat = lat;
+    final validLng = lng;
 
     final encodedLabel = Uri.encodeComponent(label ?? 'Vị trí của Bé');
     

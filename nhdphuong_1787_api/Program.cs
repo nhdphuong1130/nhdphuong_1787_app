@@ -197,8 +197,8 @@ using (var scope = app.Services.CreateScope())
                 BatteryLevel = 82,
                 IsOnline = true,
                 IsLocked = false,
-                LastKnownLat = 10.762622,
-                LastKnownLng = 106.660172,
+                LastKnownLat = 0.0,
+                LastKnownLng = 0.0,
                 UpdatedAt = DateTime.UtcNow
             };
 
@@ -216,8 +216,8 @@ using (var scope = app.Services.CreateScope())
                 BatteryLevel = 95,
                 IsOnline = true,
                 IsLocked = false,
-                LastKnownLat = 10.776889,
-                LastKnownLng = 106.700806,
+                LastKnownLat = 0.0,
+                LastKnownLng = 0.0,
                 UpdatedAt = DateTime.UtcNow
             };
 

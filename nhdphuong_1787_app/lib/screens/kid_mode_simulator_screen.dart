@@ -48,12 +48,13 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
   double _currentNoiseDb = 45.0;
   NoiseMeter? _noiseMeter;
   StreamSubscription<NoiseReading>? _noiseSub;
+  StreamSubscription<Position>? _positionSub;
   DateTime? _lastNoiseAlertSent;
 
   // Trạng thái pin, định vị GPS thật từ thiết bị
   int _battery = 85;
-  double _lat = 10.762622;
-  double _lng = 106.660172;
+  double _lat = 0.0;
+  double _lng = 0.0;
   bool _isLockedByParent = false;
 
   // Mã ghép nối của máy con xuất trình cho phụ huynh
@@ -125,31 +126,79 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
       debugPrint('[KidMode] Khởi động EyeDistanceService thất bại: $e');
     }
 
-    // 4. Đọc Pin thật và Vị trí GPS thật
-    _updateRealBatteryAndLocation();
-    _sensorPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _updateRealBatteryAndLocation());
+    // 4. Kích hoạt Cảm biến Định vị GPS thật (Real-time GPS Stream & Fused Location)
+    _startRealLocationTracking();
+
+    // 5. Đọc dung lượng Pin thật định kỳ
+    _updateRealBattery();
+    _sensorPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _updateRealBattery());
   }
 
-  Future<void> _updateRealBatteryAndLocation() async {
-    // Pin thật
+  Future<void> _startRealLocationTracking() async {
+    try {
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.deniedForever || perm == LocationPermission.denied) {
+        debugPrint('[KidMode] Quyền GPS bị từ chối: $perm');
+        return;
+      }
+
+      // 1. Lấy ngay lập tức tọa độ GPS trong Fused Location Provider cache
+      final lastPos = await Geolocator.getLastKnownPosition();
+      if (lastPos != null && mounted) {
+        setState(() {
+          _lat = lastPos.latitude;
+          _lng = lastPos.longitude;
+        });
+        debugPrint('[KidMode] Real GPS from LastKnownPosition: $_lat, $_lng');
+      }
+
+      // 2. Lắng nghe luồng di chuyển GPS thật liên tục
+      const locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 2, // Cập nhật khi di chuyển tối thiểu 2m
+      );
+      _positionSub = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+        (Position pos) {
+          if (!mounted) return;
+          setState(() {
+            _lat = pos.latitude;
+            _lng = pos.longitude;
+          });
+          debugPrint('[KidMode] Real GPS Stream update: $_lat, $_lng');
+        },
+        onError: (err) {
+          debugPrint('[KidMode] GPS Stream error: $err');
+        },
+      );
+
+      // 3. Quét vệ tinh GPS trực tiếp nếu chưa có
+      final currentPos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 5),
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _lat = currentPos.latitude;
+          _lng = currentPos.longitude;
+        });
+        debugPrint('[KidMode] Real GPS from CurrentPosition: $_lat, $_lng');
+      }
+    } catch (e) {
+      debugPrint('[KidMode] Lỗi khởi động GPS thật: $e');
+    }
+  }
+
+  Future<void> _updateRealBattery() async {
     try {
       final battery = Battery();
       final level = await battery.batteryLevel;
       if (mounted && level > 0) {
         setState(() => _battery = level);
-      }
-    } catch (_) {}
-
-    // GPS thật
-    try {
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
-      );
-      if (mounted) {
-        setState(() {
-          _lat = pos.latitude;
-          _lng = pos.longitude;
-        });
       }
     } catch (_) {}
   }
@@ -195,6 +244,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     _syncTimer?.cancel();
     _sensorPollTimer?.cancel();
     _noiseSub?.cancel();
+    _positionSub?.cancel();
     _eyeDistanceService?.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1084,8 +1134,8 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                         const SizedBox(height: 4),
                         Text(
                           (_lat != 0 && _lng != 0)
-                              ? '${_lat.toStringAsFixed(2)}, ${_lng.toStringAsFixed(2)}'
-                              : 'Trực tuyến',
+                              ? '${_lat.toStringAsFixed(4)}, ${_lng.toStringAsFixed(4)}'
+                              : 'Đang bắt GPS...',
                           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
                         ),
                       ],

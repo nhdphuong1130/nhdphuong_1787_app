@@ -23,8 +23,8 @@ namespace nhdphuong_1787_api.Models
         public bool IsLocked { get; set; } = false;
 
         // GPS coordinates
-        public double LastKnownLat { get; set; } = 10.762622;
-        public double LastKnownLng { get; set; } = 106.660172;
+        public double LastKnownLat { get; set; } = 0.0;
+        public double LastKnownLng { get; set; } = 0.0;
 
         // Real-time sensor metrics
         public double CurrentNoiseDb { get; set; } = 45.0;
