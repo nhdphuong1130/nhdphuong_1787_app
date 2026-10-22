@@ -37,6 +37,60 @@ namespace nhdphuong_1787_api.Services
             return cleaned;
         }
 
+        private static string? _dynamicUrl;
+
+        public void SetDynamicGatewayUrl(string url)
+        {
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                _dynamicUrl = url.Trim();
+                _logger.LogInformation(">>> [SMS GATEWAY] Cập nhật URL động thành công: {Url}", _dynamicUrl);
+            }
+        }
+
+        public string? GetActiveGatewayUrl() => _dynamicUrl;
+
+        public async Task<(bool isOnline, string? model, string? activeUrl)> CheckGatewayHealthAsync()
+        {
+            var gatewayConfig = _configuration.GetSection("SmsGateway");
+            var configuredUrl = gatewayConfig["Url"] ?? "http://127.0.0.1:8080";
+            var username = gatewayConfig["Username"] ?? "sms";
+            var password = gatewayConfig["Password"] ?? "0vzi2T1_";
+
+            var candidateUrls = new List<string?>
+            {
+                _dynamicUrl,
+                configuredUrl,
+                "https://diameter-squad-rabbit-regardless.trycloudflare.com",
+                "http://192.168.1.219:8080",
+                "http://127.0.0.1:8080"
+            }.Where(u => !string.IsNullOrWhiteSpace(u)).Select(u => u!).Distinct().ToList();
+
+            foreach (var baseUrl in candidateUrls)
+            {
+                try
+                {
+                    var client = _httpClientFactory.CreateClient();
+                    client.Timeout = TimeSpan.FromSeconds(4);
+                    var authString = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authString);
+
+                    var resp = await client.GetAsync(baseUrl.TrimEnd('/'));
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        var body = await resp.Content.ReadAsStringAsync();
+                        return (true, body, baseUrl);
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            return (false, null, null);
+        }
+
         public async Task<bool> SendSmsAsync(string phoneNumber, string message)
         {
             var gatewayConfig = _configuration.GetSection("SmsGateway");
@@ -51,12 +105,14 @@ namespace nhdphuong_1787_api.Services
                 return false;
             }
 
-            var candidateUrls = new List<string>
+            var candidateUrls = new List<string?>
             {
+                _dynamicUrl,
                 configuredUrl,
-                "http://127.0.0.1:8080",
-                "http://192.168.1.219:8080"
-            }.Distinct().ToList();
+                "https://diameter-squad-rabbit-regardless.trycloudflare.com",
+                "http://192.168.1.219:8080",
+                "http://127.0.0.1:8080"
+            }.Where(u => !string.IsNullOrWhiteSpace(u)).Select(u => u!).Distinct().ToList();
 
             foreach (var baseUrl in candidateUrls)
             {

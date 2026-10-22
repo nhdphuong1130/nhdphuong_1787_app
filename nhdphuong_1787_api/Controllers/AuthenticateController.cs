@@ -484,5 +484,43 @@ namespace nhdphuong_1787_api.Controllers
                 }
             });
         }
+
+        // KIỂM TRA TRẠNG THÁI SIM GATEWAY
+        [HttpGet("smsgateway-status")]
+        public async Task<IActionResult> GetSmsGatewayStatus()
+        {
+            var (isOnline, info, activeUrl) = await _smsService.CheckGatewayHealthAsync();
+            return Ok(new
+            {
+                isOnline,
+                gatewayInfo = info,
+                activeUrl,
+                dynamicUrl = _smsService.GetActiveGatewayUrl()
+            });
+        }
+
+        // CẬP NHẬT ĐƯỜNG DẪN CLOUD TUNNEL CHO SIM GATEWAY (KHÔNG CẦN REDEPLOY)
+        [HttpPost("smsgateway-url")]
+        public async Task<IActionResult> SetSmsGatewayUrl([FromBody] SetGatewayUrlModel model)
+        {
+            if (string.IsNullOrWhiteSpace(model.Url))
+                return BadRequest(new { message = "URL không được để trống!" });
+
+            _smsService.SetDynamicGatewayUrl(model.Url);
+            var (isOnline, info, activeUrl) = await _smsService.CheckGatewayHealthAsync();
+            return Ok(new
+            {
+                status = "Success",
+                message = "Đã cập nhật URL SIM Gateway thành công!",
+                isOnline,
+                gatewayInfo = info,
+                activeUrl
+            });
+        }
+    }
+
+    public class SetGatewayUrlModel
+    {
+        public string Url { get; set; } = string.Empty;
     }
 }
