@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/config_url.dart';
 import '../services/auth_service.dart';
 import '../services/token_service.dart';
+import '../services/child_service.dart';
 import 'otp_verification_screen.dart';
 import 'registration_screen.dart';
 import 'admin_screen.dart';
 import 'staff_screen.dart';
 import 'parent_dashboard_screen.dart';
 import 'kid_mode_simulator_screen.dart';
+import 'kid_pairing_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -18,13 +22,19 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _usernameController = TextEditingController(text: 'parent1787');
-  final _passwordController = TextEditingController(text: 'Password123@');
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
   final LocalAuthentication _localAuth = LocalAuthentication();
 
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
   bool _canCheckBiometrics = false;
+
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    serverClientId: '769609857279-66sh2d25cuvb205phs5bbcdti5d1nuct.apps.googleusercontent.com',
+    scopes: ['email', 'profile'],
+  );
 
   @override
   void initState() {
@@ -90,6 +100,70 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Đăng nhập bằng tài khoản Google (OAuth 2.0 / OpenID Connect)
+  Future<void> _handleGoogleLogin() async {
+    setState(() => _isGoogleLoading = true);
+    try {
+      // Đăng xuất phiên trước đó để người dùng có thể đổi hoặc chọn tài khoản
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+
+      final GoogleSignInAccount? account = await _googleSignIn.signIn();
+      if (account == null) {
+        // Người dùng bấm ra ngoài hoặc hủy chọn tài khoản
+        if (mounted) setState(() => _isGoogleLoading = false);
+        return;
+      }
+
+      final GoogleSignInAuthentication auth = await account.authentication;
+      final String? idToken = auth.idToken;
+
+      if (idToken == null || idToken.isEmpty) {
+        if (!mounted) return;
+        setState(() => _isGoogleLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không nhận được Google ID Token từ thiết bị! Vui lòng thử lại.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      final result = await AuthService.loginWithGoogle(idToken);
+      if (!mounted) return;
+      setState(() => _isGoogleLoading = false);
+
+      if (result['success'] == true) {
+        final role = result['role'] as String? ?? 'Customer';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Chào mừng ${account.displayName ?? account.email}!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _navigateByRole(role);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message'] ?? 'Đăng nhập Google thất bại!'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isGoogleLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi đăng nhập Google: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   void _navigateByRole(String role) {
     Widget destination;
     if (role == 'Admin') {
@@ -118,91 +192,102 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     setState(() => _isLoading = true);
-    final res = await AuthService.login(username, password);
-    setState(() => _isLoading = false);
+
+    try {
+      // 1. Kiểm tra nếu là tài khoản của trẻ em (Bé Bo / Bé Na do phụ huynh cấp)
+      final kidRes = await ChildService.kidLogin(
+        username: username,
+        password: password,
+        deviceName: 'Android Z2464N (Máy Thật)',
+        deviceModel: 'P780F01',
+      );
+
+      if (kidRes['success'] == true) {
+        final childId = kidRes['childProfileId'] as int;
+        final childName = kidRes['childName'] as String? ?? 'Bé Yêu';
+        final code = kidRes['pairingCode'] as String? ?? '178701';
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('paired_child_id', childId);
+        await prefs.setString('paired_child_name', childName);
+        await prefs.setString('paired_code', code);
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎉 Đăng nhập tài khoản của $childName thành công! Đang kích hoạt bảo vệ...'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => KidModeSimulatorScreen(
+              childId: childId,
+              childName: childName,
+            ),
+          ),
+          (route) => false,
+        );
+        return;
+      }
+
+      // 2. Tài khoản người lớn (Phụ huynh / Admin / Staff)
+      final res = await AuthService.login(username, password);
+
+      if (!mounted) return;
+
+      if (res['success'] == true) {
+        // Chuyển sang màn hình xác thực OTP (Bước 2)
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OtpVerificationScreen(
+              username: username,
+              phoneNumber: res['phoneNumber'],
+              simulatedOtp: res['simulatedOtp'],
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res['message'] ?? 'Đăng nhập thất bại!'), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi đăng nhập: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _openKidMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pairedId = prefs.getInt('paired_child_id');
+    final pairedName = prefs.getString('paired_child_name');
 
     if (!mounted) return;
 
-    if (res['success'] == true) {
-      // Chuyển sang màn hình xác thực OTP (Bước 2)
-      Navigator.of(context).push(
+    if (pairedId != null && pairedName != null) {
+      // Đã ghép nối trước đó -> Vào thẳng màn hình máy con
+      Navigator.push(
+        context,
         MaterialPageRoute(
-          builder: (_) => OtpVerificationScreen(
-            username: username,
-            phoneNumber: res['phoneNumber'],
-            simulatedOtp: res['simulatedOtp'],
+          builder: (_) => KidModeSimulatorScreen(
+            childId: pairedId,
+            childName: pairedName,
           ),
         ),
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(res['message'] ?? 'Đăng nhập thất bại!'), backgroundColor: Colors.red),
+      // Chưa ghép nối -> Mở màn hình quét QR / nhập mã 6 số
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const KidPairingScreen()),
       );
     }
-  }
-
-  void _openKidModeDialog() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.child_care, color: Colors.deepPurple, size: 28),
-                SizedBox(width: 8),
-                Text(
-                  'Chọn Máy Trẻ Em Để Demo',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Điện thoại này sẽ đóng vai trò là "Máy Con", nhận lệnh khóa từ máy ảo (Laptop) và thử nghiệm AI bảo vệ mắt, đo tiếng ồn dB.',
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              tileColor: Colors.deepPurple[50],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              leading: const CircleAvatar(backgroundColor: Colors.deepPurple, child: Text('Bo', style: TextStyle(color: Colors.white))),
-              title: const Text('Bé Bo (ID: 1)', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Thiết bị: Samsung Galaxy A15'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const KidModeSimulatorScreen(childId: 1, childName: 'Bé Bo')),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            ListTile(
-              tileColor: Colors.pink[50],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              leading: const CircleAvatar(backgroundColor: Colors.pink, child: Text('Na', style: TextStyle(color: Colors.white))),
-              title: const Text('Bé Na (ID: 2)', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Thiết bị: iPad Gen 9'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const KidModeSimulatorScreen(childId: 2, childName: 'Bé Na')),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
-    );
   }
 
   void _fillAccount(String username, String pass) {
@@ -255,21 +340,31 @@ class _LoginScreenState extends State<LoginScreen> {
                   runSpacing: 6,
                   children: [
                     ActionChip(
-                      avatar: const Icon(Icons.cloud_done, size: 14, color: Colors.blue),
-                      label: const Text('Tunnel (Khuyên dùng)', style: TextStyle(fontSize: 11)),
+                      avatar: const Icon(Icons.usb, size: 14, color: Colors.teal),
+                      label: const Text('Cáp USB (127.0.0.1)', style: TextStyle(fontSize: 11)),
                       onPressed: () {
                         setDlgState(() {
-                          urlCtrl.text = 'https://knowing-clicks-ice-financing.trycloudflare.com/api/';
+                          urlCtrl.text = 'http://127.0.0.1:5000/api/';
+                          testResult = null;
+                        });
+                      },
+                    ),
+                    ActionChip(
+                      avatar: const Icon(Icons.cloud_done, size: 14, color: Colors.blue),
+                      label: const Text('Cloudflare Tunnel', style: TextStyle(fontSize: 11)),
+                      onPressed: () {
+                        setDlgState(() {
+                          urlCtrl.text = ConfigUrl.defaultTunnelUrl;
                           testResult = null;
                         });
                       },
                     ),
                     ActionChip(
                       avatar: const Icon(Icons.wifi, size: 14, color: Colors.orange),
-                      label: const Text('WiFi LAN (10.12.24.140)', style: TextStyle(fontSize: 11)),
+                      label: const Text('WiFi LAN (192.168.1.33)', style: TextStyle(fontSize: 11)),
                       onPressed: () {
                         setDlgState(() {
-                          urlCtrl.text = 'http://10.12.24.140:5000/api/';
+                          urlCtrl.text = 'http://192.168.1.33:5000/api/';
                           testResult = null;
                         });
                       },
@@ -287,31 +382,63 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
                 const SizedBox(height: 14),
-                OutlinedButton.icon(
-                  onPressed: isTesting
-                      ? null
-                      : () async {
-                          setDlgState(() {
-                            isTesting = true;
-                            testResult = null;
-                          });
-                          await ConfigUrl.setCustomBaseUrl(urlCtrl.text.trim());
-                          final ok = await ConfigUrl.testConnection();
-                          setDlgState(() {
-                            isTesting = false;
-                            if (ok) {
-                              testResult = '✅ Kết nối thành công tới Web API!';
-                              testResultColor = Colors.green;
-                            } else {
-                              testResult = '❌ Không thể kết nối tới URL này!\n(Nếu dùng WiFi chung bị chặn AP isolation, hãy bấm nút "Tunnel (Khuyên dùng)")';
-                              testResultColor = Colors.red;
-                            }
-                          });
-                        },
-                  icon: isTesting
-                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.network_check, size: 18),
-                  label: const Text('Kiểm tra kết nối (Ping API)'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: isTesting
+                            ? null
+                            : () async {
+                                setDlgState(() {
+                                  isTesting = true;
+                                  testResult = null;
+                                });
+                                final ok = await ConfigUrl.testUrl(urlCtrl.text.trim());
+                                setDlgState(() {
+                                  isTesting = false;
+                                  if (ok) {
+                                    testResult = '✅ Kết nối thành công tới Web API!';
+                                    testResultColor = Colors.green;
+                                  } else {
+                                    testResult = '❌ Không thể kết nối tới URL này!';
+                                    testResultColor = Colors.red;
+                                  }
+                                });
+                              },
+                        icon: isTesting
+                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.network_check, size: 16),
+                        label: const Text('Ping URL', style: TextStyle(fontSize: 12)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: isTesting
+                            ? null
+                            : () async {
+                                setDlgState(() {
+                                  isTesting = true;
+                                  testResult = null;
+                                });
+                                final recovered = await ConfigUrl.autoDiscoverWorkingUrl();
+                                setDlgState(() {
+                                  isTesting = false;
+                                  if (recovered != null) {
+                                    urlCtrl.text = recovered;
+                                    testResult = '🎉 Đã tự động dò thấy API: $recovered';
+                                    testResultColor = Colors.green;
+                                  } else {
+                                    testResult = '⚠️ Không tìm thấy API nào đang phản hồi!';
+                                    testResultColor = Colors.red;
+                                  }
+                                });
+                              },
+                        icon: const Icon(Icons.auto_awesome, size: 16),
+                        label: const Text('Tự Động Dò', style: TextStyle(fontSize: 12)),
+                      ),
+                    ),
+                  ],
                 ),
                 if (testResult != null) ...[
                   const SizedBox(height: 8),
@@ -430,6 +557,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           Wrap(
                             alignment: WrapAlignment.center,
                             spacing: 8,
+                            runSpacing: 6,
                             children: [
                               ActionChip(
                                 label: const Text('Phụ huynh', style: TextStyle(fontSize: 11)),
@@ -445,6 +573,18 @@ class _LoginScreenState extends State<LoginScreen> {
                                 label: const Text('Staff', style: TextStyle(fontSize: 11)),
                                 avatar: const Icon(Icons.support_agent, size: 14),
                                 onPressed: () => _fillAccount('staff1787', 'Password123@'),
+                              ),
+                              ActionChip(
+                                label: const Text('Bé Bo (Con)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.deepPurple)),
+                                avatar: const Icon(Icons.child_care, size: 14, color: Colors.deepPurple),
+                                backgroundColor: Colors.deepPurple[50],
+                                onPressed: () => _fillAccount('bebo1787', 'Password123@'),
+                              ),
+                              ActionChip(
+                                label: const Text('Bé Na (Con)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.pink)),
+                                avatar: const Icon(Icons.face_3, size: 14, color: Colors.pink),
+                                backgroundColor: Colors.pink[50],
+                                onPressed: () => _fillAccount('bena1787', 'Password123@'),
                               ),
                             ],
                           ),
@@ -467,6 +607,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _handleLogin(),
                     decoration: InputDecoration(
                       labelText: 'Mật khẩu',
                       prefixIcon: const Icon(Icons.lock_outline),
@@ -503,6 +645,69 @@ class _LoginScreenState extends State<LoginScreen> {
                         side: BorderSide(color: theme.colorScheme.primary),
                       ),
                     ),
+                  const SizedBox(height: 12),
+
+                  // Đường kẻ phân cách HOẶC
+                  Row(
+                    children: [
+                      Expanded(child: Divider(color: Colors.grey[300])),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          'HOẶC',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[600]),
+                        ),
+                      ),
+                      Expanded(child: Divider(color: Colors.grey[300])),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Nút Đăng nhập bằng Google
+                  OutlinedButton(
+                    onPressed: (_isLoading || _isGoogleLoading) ? null : _handleGoogleLogin,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      backgroundColor: Colors.white,
+                      side: BorderSide(color: Colors.grey[350]!),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      elevation: 1,
+                      shadowColor: Colors.black12,
+                    ),
+                    child: _isGoogleLoading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Image.network(
+                                'https://developers.google.com/identity/images/g-logo.png',
+                                width: 22,
+                                height: 22,
+                                errorBuilder: (ctx, error, stackTrace) => Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF4285F4),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text('G', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Text(
+                                'Đăng nhập bằng tài khoản Google',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
                   const SizedBox(height: 16),
 
                   Wrap(
@@ -511,10 +716,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       const Text('Chưa có tài khoản? '),
                       TextButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
+                        onPressed: () async {
+                          final newUsername = await Navigator.of(context).push<String>(
                             MaterialPageRoute(builder: (_) => const RegistrationScreen()),
                           );
+                          if (newUsername != null && newUsername.isNotEmpty) {
+                            setState(() {
+                              _usernameController.text = newUsername;
+                              _passwordController.clear();
+                            });
+                          }
                         },
                         child: const Text('Đăng ký ngay'),
                       ),
@@ -533,10 +744,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         side: BorderSide(color: Colors.deepPurple[200]!),
                       ),
                     ),
-                    onPressed: _openKidModeDialog,
+                    onPressed: _openKidMode,
                     icon: const Icon(Icons.phonelink_setup),
                     label: const Text(
-                      '📱 Chế Độ Máy Trẻ Em (Để Điện Thoại Thật Demo)',
+                      '📱 Ghép Nối Máy Trẻ Em (Để Điện Thoại Thật Demo)',
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
