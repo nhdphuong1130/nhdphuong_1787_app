@@ -123,6 +123,7 @@ class ConfigUrl {
   static String get kidLogin => '${baseUrl}ChildProfileApi/kid-login';
   static String requestUnpair(int id) => '${baseUrl}ChildProfileApi/$id/request-unpair';
   static String confirmUnpair(int id) => '${baseUrl}ChildProfileApi/$id/confirm-unpair';
+  static String verifyParentExit(int id) => '${baseUrl}ChildProfileApi/$id/verify-parent-exit';
 
   // App Rules endpoints
   static String get appRules => '${baseUrl}AppRuleApi';

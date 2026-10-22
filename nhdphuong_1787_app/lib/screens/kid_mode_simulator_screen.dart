@@ -10,9 +10,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_log.dart';
 import '../models/app_rule.dart';
 import '../models/screen_time_schedule.dart';
-import '../services/auth_service.dart';
 import '../services/child_service.dart';
 import '../services/eye_distance_service.dart';
+import '../services/app_blocker_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/eye_care_overlay.dart';
 import 'login_screen.dart';
 
@@ -62,6 +63,9 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
 
   Timer? _syncTimer;
   Timer? _sensorPollTimer;
+  Timer? _appMonitorTimer;
+  DateTime? _lastBlockAlertSent;
+  bool _isShowingBlockOverlay = false;
   bool _isSyncing = false;
   List<AppRule> _appRules = [];
   List<ScreenTimeSchedule> _schedules = [];
@@ -132,6 +136,109 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     // 5. Đọc dung lượng Pin thật định kỳ
     _updateRealBattery();
     _sensorPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _updateRealBattery());
+
+    // 6. Kích hoạt Dịch vụ Chặn ứng dụng phần cứng thật (UsageStatsManager & App Blocker)
+    _startRealAppBlockingService();
+  }
+
+  Future<void> _startRealAppBlockingService() async {
+    try {
+      final hasUsage = await AppBlockerService.checkUsagePermission();
+      if (!hasUsage && mounted) {
+        await AppBlockerService.requestUsagePermission();
+      }
+    } catch (_) {}
+
+    _appMonitorTimer?.cancel();
+    _appMonitorTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) => _checkForegroundAndBlock());
+  }
+
+  Future<void> _checkForegroundAndBlock() async {
+    if (!mounted) return;
+    try {
+      final currentPkg = await AppBlockerService.getForegroundPackage();
+      if (currentPkg == null || currentPkg.isEmpty) return;
+
+      // Đang ở trong chính ứng dụng ChildGuard
+      if (currentPkg == 'com.nhdphuong1787.nhdphuong_1787_app') return;
+
+      // 1. Phụ huynh bật Khóa Toàn Bộ Máy từ xa
+      if (_isLockedByParent) {
+        debugPrint('[AppBlocker] Thiết bị đang bị khóa từ xa! Kéo về ChildGuard.');
+        await AppBlockerService.bringAppToFront();
+        return;
+      }
+
+      // 2. Kiểm tra xem app bé mở có nằm trong danh sách Bị Khóa hay không
+      final allRules = _getEffectiveRules();
+      for (final rule in allRules) {
+        if (!rule.isActive) continue;
+        if (rule.status == 'Blocked') {
+          final pkgs = AppBlockerService.getMatchingPackages(rule.appName, rule.packageNameOrDomain);
+          if (pkgs.map((p) => p.toLowerCase()).contains(currentPkg.toLowerCase())) {
+            debugPrint('[AppBlocker] Phát hiện mở app bị cấm: ${rule.appName} ($currentPkg). Đang can thiệp chặn!');
+            // Kéo ngay ChildGuard về đè lên ứng dụng bị chặn
+            await AppBlockerService.bringAppToFront();
+
+            final now = DateTime.now();
+            if (_lastBlockAlertSent == null || now.difference(_lastBlockAlertSent!).inSeconds >= 10) {
+              _lastBlockAlertSent = now;
+              ChildService.sendAlert(AlertLog(
+                id: 0,
+                childProfileId: widget.childId,
+                alertType: 'APP_BLOCKED',
+                severity: 'Danger',
+                value: rule.appName,
+                message: 'Bé ${widget.childName} vừa cố tình mở ứng dụng bị cấm: ${rule.appName} trên máy và đã bị hệ thống chặn lại!',
+                createdAt: now,
+              ));
+            }
+
+            if (!_isShowingBlockOverlay && mounted) {
+              _showEnforcedBlockDialog(rule.appName);
+            }
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[AppBlocker] Lỗi kiểm tra foreground: $e');
+    }
+  }
+
+  void _showEnforcedBlockDialog(String appName) {
+    if (_isShowingBlockOverlay) return;
+    _isShowingBlockOverlay = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.block_rounded, color: Colors.red, size: 28),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text('ỨNG DỤNG BỊ CHẶN', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 16)),
+            ),
+          ],
+        ),
+        content: Text(
+          'Ứng dụng "$appName" đã bị Phụ huynh khóa hoàn toàn trên thiết bị này.\n\nHệ thống ChildGuard đã tự động can thiệp và ngăn chặn. Con hãy tập trung học bài hoặc xin phép Ba Mẹ nhé!',
+          style: const TextStyle(fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF3730A3)),
+            onPressed: () {
+              _isShowingBlockOverlay = false;
+              Navigator.pop(ctx);
+            },
+            child: const Text('Đã Hiểu, Quay Lại'),
+          ),
+        ],
+      ),
+    ).then((_) => _isShowingBlockOverlay = false);
   }
 
   Future<void> _startRealLocationTracking() async {
@@ -243,6 +350,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
   void dispose() {
     _syncTimer?.cancel();
     _sensorPollTimer?.cancel();
+    _appMonitorTimer?.cancel();
     _noiseSub?.cancel();
     _positionSub?.cancel();
     _eyeDistanceService?.dispose();
@@ -367,11 +475,6 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              const Text(
-                'Mật khẩu mẫu của Ba Mẹ: Password123@',
-                style: TextStyle(fontSize: 11, color: Color(0xFF4338CA), fontStyle: FontStyle.italic),
-              ),
             ],
           ),
           actions: [
@@ -386,7 +489,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                   : () async {
                       final input = passCtrl.text.trim();
                       if (input.isEmpty) {
-                        setDlgState(() => errText = 'Vui lòng nhập mật khẩu!');
+                        setDlgState(() => errText = 'Vui lòng nhập mật khẩu phụ huynh!');
                         return;
                       }
                       setDlgState(() {
@@ -395,11 +498,8 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                       });
 
                       final nav = Navigator.of(context);
-                      bool success = input == 'Password123@';
-                      if (!success) {
-                        final authRes = await AuthService.login('parent1787', input);
-                        success = authRes['success'] == true;
-                      }
+                      final verifyRes = await ChildService.verifyParentExit(widget.childId, input);
+                      final success = verifyRes['success'] == true;
 
                       if (success) {
                         final prefs = await SharedPreferences.getInstance();
@@ -415,7 +515,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                       } else {
                         setDlgState(() {
                           isVerifying = false;
-                          errText = 'Mật khẩu không chính xác! Con không được phép thoát.';
+                          errText = verifyRes['message'] ?? 'Mật khẩu phụ huynh không chính xác! Con không được phép thoát.';
                         });
                       }
                     },
@@ -612,9 +712,16 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
 
             // Tiến trình thời gian sử dụng hôm nay
             const Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Thời lượng sử dụng máy hôm nay:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                Expanded(
+                  child: Text(
+                    'Thời lượng sử dụng hôm nay:',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                SizedBox(width: 8),
                 Text('35 phút / 120 phút', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
               ],
             ),
@@ -670,18 +777,69 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     );
   }
 
+  /// Lấy danh sách quy tắc ứng dụng thực tế từ server hoặc mặc định an toàn
+  List<AppRule> _getEffectiveRules() {
+    if (_appRules.isNotEmpty) return _appRules;
+    return [
+      AppRule(id: 1, childProfileId: widget.childId, appName: 'Duolingo', category: 'Education', status: 'Allowed', packageNameOrDomain: 'com.duolingo'),
+      AppRule(id: 2, childProfileId: widget.childId, appName: 'Học Toán Online', category: 'Education', status: 'Allowed', packageNameOrDomain: 'com.google.android.calculator'),
+      AppRule(id: 3, childProfileId: widget.childId, appName: 'Sách Nói Bé Yêu', category: 'Education', status: 'Allowed', packageNameOrDomain: 'com.fonos.app'),
+      AppRule(id: 4, childProfileId: widget.childId, appName: 'YouTube Kids', category: 'Entertainment', status: 'Limited', dailyLimitMinutes: 45, packageNameOrDomain: 'com.google.android.apps.youtube.kids'),
+      AppRule(id: 5, childProfileId: widget.childId, appName: 'TikTok', category: 'SocialMedia', status: 'Blocked', packageNameOrDomain: 'com.ss.android.ugc.trill'),
+      AppRule(id: 6, childProfileId: widget.childId, appName: 'Facebook', category: 'SocialMedia', status: 'Blocked', packageNameOrDomain: 'com.facebook.katana'),
+      AppRule(id: 7, childProfileId: widget.childId, appName: 'Free Fire', category: 'Game', status: 'Blocked', packageNameOrDomain: 'com.dts.freefireth'),
+      AppRule(id: 8, childProfileId: widget.childId, appName: 'Roblox', category: 'Game', status: 'Limited', dailyLimitMinutes: 30, packageNameOrDomain: 'com.roblox.client'),
+    ];
+  }
+
+  IconData _getCategoryIcon(String category, String appName) {
+    final lower = appName.toLowerCase();
+    if (lower.contains('duolingo') || lower.contains('học') || lower.contains('toán')) return Icons.school_rounded;
+    if (lower.contains('sách') || lower.contains('truyện')) return Icons.auto_stories_rounded;
+    if (lower.contains('youtube')) return Icons.play_arrow_rounded;
+    if (lower.contains('tiktok')) return Icons.music_note_rounded;
+    if (lower.contains('game') || lower.contains('roblox') || lower.contains('fire')) return Icons.sports_esports_rounded;
+    if (lower.contains('facebook')) return Icons.public_rounded;
+    switch (category) {
+      case 'Education':
+        return Icons.school_rounded;
+      case 'Game':
+        return Icons.sports_esports_rounded;
+      case 'Entertainment':
+        return Icons.smart_display_rounded;
+      case 'SocialMedia':
+        return Icons.public_rounded;
+      default:
+        return Icons.apps_rounded;
+    }
+  }
+
+  Color _getCategoryColor(String category, String appName) {
+    final lower = appName.toLowerCase();
+    if (lower.contains('duolingo')) return const Color(0xFF58CC02);
+    if (lower.contains('youtube')) return const Color(0xFFFF0000);
+    if (lower.contains('facebook')) return const Color(0xFF1877F2);
+    if (lower.contains('tiktok')) return Colors.black87;
+    if (lower.contains('roblox')) return const Color(0xFF1E293B);
+    switch (category) {
+      case 'Education':
+        return const Color(0xFF10B981);
+      case 'Game':
+        return const Color(0xFFEA580C);
+      case 'Entertainment':
+        return const Color(0xFF8B5CF6);
+      case 'SocialMedia':
+        return const Color(0xFF2563EB);
+      default:
+        return const Color(0xFF4338CA);
+    }
+  }
+
   /// THẺ 2: CÁC PHẦN MỀM ĐƯỢC PHÉP SỬ DỤNG KHI PHỤ HUYNH CHO PHÉP (WHITELIST APPS)
   Widget _buildAllowedAppsLauncherCard() {
-    final standardApps = [
-      {'name': 'Duolingo', 'category': 'Education', 'icon': Icons.school_rounded, 'color': const Color(0xFF58CC02), 'desc': 'Học Tiếng Anh'},
-      {'name': 'Học Toán Online', 'category': 'Education', 'icon': Icons.calculate_rounded, 'color': const Color(0xFF0284C7), 'desc': 'Bài tập Toán'},
-      {'name': 'Sách Nói Bé Yêu', 'category': 'Education', 'icon': Icons.auto_stories_rounded, 'color': const Color(0xFFD97706), 'desc': 'Kể chuyện cổ tích'},
-      {'name': 'YouTube Kids', 'category': 'Entertainment', 'icon': Icons.play_arrow_rounded, 'color': const Color(0xFFFF0000), 'desc': 'Kênh thiếu nhi'},
-      {'name': 'TikTok', 'category': 'SocialMedia', 'icon': Icons.music_note_rounded, 'color': Colors.black87, 'desc': 'Video ngắn'},
-      {'name': 'Roblox', 'category': 'Game', 'icon': Icons.sports_esports_rounded, 'color': const Color(0xFF1E293B), 'desc': 'Trò chơi'},
-      {'name': 'Free Fire', 'category': 'Game', 'icon': Icons.local_fire_department_rounded, 'color': const Color(0xFFEA580C), 'desc': 'Bắn súng'},
-      {'name': 'Facebook', 'category': 'SocialMedia', 'icon': Icons.public_rounded, 'color': const Color(0xFF1877F2), 'desc': 'Mạng xã hội'},
-    ];
+    final allRules = _getEffectiveRules().where((r) => r.isActive).toList();
+    final allowedRules = allRules.where((r) => r.status != 'Blocked').toList();
+    final blockedRules = allRules.where((r) => r.status == 'Blocked').toList();
 
     return Card(
       elevation: 2,
@@ -700,20 +858,20 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                     color: const Color(0xFFEEF2FF),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.apps_rounded, color: Color(0xFF4338CA), size: 22),
+                  child: const Icon(Icons.verified_user_rounded, color: Color(0xFF4338CA), size: 22),
                 ),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      const Text(
                         'Ứng Dụng Được Phép Sử Dụng',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF0F172A)),
                       ),
                       Text(
-                        'Chỉ mở được các ứng dụng mà Phụ huynh cho phép',
-                        style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                        'Phụ huynh cho phép (${allowedRules.length} ứng dụng an toàn)',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
                       ),
                     ],
                   ),
@@ -722,104 +880,140 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
             ),
             const SizedBox(height: 14),
 
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: standardApps.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 2.1,
-              ),
-              itemBuilder: (ctx, i) {
-                final app = standardApps[i];
-                final appName = app['name'] as String;
-                final category = app['category'] as String;
-                final icon = app['icon'] as IconData;
-                final iconColor = app['color'] as Color;
-                final desc = app['desc'] as String;
-
-                AppRule? matchedRule;
-                try {
-                  matchedRule = _appRules.firstWhere(
-                    (r) => r.appName.trim().toLowerCase() == appName.trim().toLowerCase(),
-                  );
-                } catch (_) {}
-
-                final status = (matchedRule != null && matchedRule.isActive) ? matchedRule.status : (category == 'Education' ? 'Allowed' : 'Blocked');
-                final isBlocked = status == 'Blocked';
-
-                return InkWell(
+            if (allowedRules.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFBEB),
                   borderRadius: BorderRadius.circular(14),
-                  onTap: () => _handleAppTap(appName, category, isBlocked),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: isBlocked ? const Color(0xFFF8FAFC) : const Color(0xFFF0FDF4),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: isBlocked ? const Color(0xFFE2E8F0) : const Color(0xFF86EFAC),
-                        width: isBlocked ? 1.0 : 1.5,
+                  border: Border.all(color: const Color(0xFFFDE68A)),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(Icons.lock_clock_rounded, color: Colors.orange, size: 36),
+                    SizedBox(height: 8),
+                    Text(
+                      'Hiện tại chưa có ứng dụng nào được Phụ huynh cho phép mở.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              )
+            else
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: allowedRules.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 2.1,
+                ),
+                itemBuilder: (ctx, i) {
+                  final rule = allowedRules[i];
+                  final icon = _getCategoryIcon(rule.category, rule.appName);
+                  final iconColor = _getCategoryColor(rule.category, rule.appName);
+
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => _launchAllowedApp(rule),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: iconColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(icon, color: iconColor, size: 20),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  rule.appName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  rule.status == 'Limited'
+                                      ? '⏳ Giới hạn: ${rule.dailyLimitMinutes}p'
+                                      : '✅ Cho phép mở',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.green[700],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: isBlocked ? Colors.grey[200] : iconColor.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(
-                            isBlocked ? Icons.lock_rounded : icon,
-                            color: isBlocked ? Colors.grey[600] : iconColor,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                appName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: isBlocked ? Colors.grey[600] : const Color(0xFF0F172A),
-                                ),
-                              ),
-                              Text(
-                                isBlocked ? '🔒 Ba Mẹ Khóa' : '✅ Cho phép ($desc)',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: isBlocked ? Colors.red[700] : Colors.green[700],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                  );
+                },
+              ),
+
+            // Danh sách các ứng dụng Ba Mẹ đã khóa hoàn toàn
+            if (blockedRules.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(Icons.block_rounded, color: Colors.red, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Đang bị Ba Mẹ khóa (${blockedRules.length} app)',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.red),
                   ),
-                );
-              },
-            ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: blockedRules.map((rule) {
+                  return ActionChip(
+                    avatar: const Icon(Icons.lock, size: 14, color: Colors.red),
+                    label: Text(
+                      rule.appName,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.red),
+                    ),
+                    backgroundColor: const Color(0xFFFEF2F2),
+                    side: const BorderSide(color: Color(0xFFFECACA)),
+                    onPressed: () => _showEnforcedBlockDialog(rule.appName),
+                  );
+                }).toList(),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  void _handleAppTap(String appName, String category, bool isBlocked) {
+  Future<void> _launchAllowedApp(AppRule rule) async {
     if (_isLockedByParent) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -830,61 +1024,39 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
       return;
     }
 
-    if (isBlocked) {
-      // Gửi AlertLog lên Web API
-      ChildService.sendAlert(
-        AlertLog(
-          id: 0,
-          childProfileId: widget.childId,
-          alertType: 'APP_BLOCKED',
-          severity: 'Warning',
-          value: appName,
-          message: 'Bé ${widget.childName} vừa cố gắng mở ứng dụng bị chặn: $appName lúc ${TimeOfDay.now().format(context)}',
-          createdAt: DateTime.now(),
-        ),
-      );
-
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Row(
-            children: [
-              Icon(Icons.block_rounded, color: Colors.red, size: 26),
-              SizedBox(width: 8),
-              Text('Ứng Dụng Bị Khóa', style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: Text(
-            'Ứng dụng "$appName" đang bị Phụ huynh khóa để bảo vệ thời gian học tập của con.\nCon hãy tập trung học bài hoặc xin phép Ba Mẹ để được mở nhé!',
-            style: const TextStyle(fontSize: 13, height: 1.4),
-          ),
-          actions: [
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF3730A3)),
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Đã Hiểu, Quay Lại'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-
-    // Ứng dụng được phép
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
           children: [
             const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
             const SizedBox(width: 8),
-            Expanded(child: Text('Đang mở $appName... (Ứng dụng an toàn, được Ba Mẹ cho phép)')),
+            Expanded(child: Text('Đang mở ${rule.appName}... (Được Ba Mẹ cấp phép)')),
           ],
         ),
         backgroundColor: Colors.green[700],
         duration: const Duration(seconds: 2),
       ),
     );
+
+    // Kích hoạt mở ứng dụng thật trên máy qua package
+    final pkgs = AppBlockerService.getMatchingPackages(rule.appName, rule.packageNameOrDomain);
+    bool launched = false;
+    for (final pkg in pkgs) {
+      launched = await AppBlockerService.launchApp(pkg);
+      if (launched) break;
+    }
+
+    if (!launched) {
+      final query = pkgs.isNotEmpty
+          ? 'https://play.google.com/store/apps/details?id=${pkgs.first}'
+          : 'https://www.google.com/search?q=${Uri.encodeComponent(rule.appName)}';
+      try {
+        final uri = Uri.parse(query);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      } catch (_) {}
+    }
   }
 
   /// THẺ 3: MÃ QR & OTP KẾT NỐI MÁY PHỤ HUYNH

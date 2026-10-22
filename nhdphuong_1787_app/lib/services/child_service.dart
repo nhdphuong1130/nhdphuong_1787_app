@@ -5,6 +5,7 @@ import '../models/app_rule.dart';
 import '../models/screen_time_schedule.dart';
 import '../models/alert_log.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 
 class ChildService {
   // 1. Quản lý Hồ sơ trẻ em
@@ -295,6 +296,30 @@ class ChildService {
       }
     } catch (e) {
       return {'success': false, 'message': 'Lỗi kết nối máy chủ: $e'};
+    }
+  }
+
+  // 10. Xác thực mật khẩu phụ huynh khi muốn thoát Chế độ Bé
+  static Future<Map<String, dynamic>> verifyParentExit(int childId, String password) async {
+    try {
+      final response = await ApiClient.post(
+        ConfigUrl.verifyParentExit(childId),
+        body: {'password': password},
+      );
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 200) {
+        return {'success': true, ...data};
+      } else if (response.statusCode == 404) {
+        final authRes = await AuthService.login('parent1787', password);
+        if (authRes['success'] == true || authRes['requiresOtp'] == true) {
+          return {'success': true, 'message': 'Xác thực phụ huynh thành công!'};
+        }
+        return {'success': false, 'message': 'Mật khẩu phụ huynh không chính xác!'};
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Mật khẩu phụ huynh không chính xác!'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Lỗi kết nối máy chủ xác thực: $e'};
     }
   }
 }
