@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using nhdphuong_1787_api.Models;
@@ -12,10 +13,12 @@ namespace nhdphuong_1787_api.Controllers
     public class ChildProfileApiController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
+        private readonly UserManager<User> _userManager;
 
-        public ChildProfileApiController(ApplicationDbContext context)
+        public ChildProfileApiController(ApplicationDbContext context, UserManager<User> userManager)
         {
             _context = context;
+            _userManager = userManager;
         }
 
         private string? GetCurrentUserId() => User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -472,6 +475,56 @@ namespace nhdphuong_1787_api.Controllers
                 message = "Đã hủy kết nối thiết bị thành công theo phê duyệt của Phụ huynh!"
             });
         }
+
+        // POST: api/ChildProfileApi/{id}/verify-parent-exit (Xác thực mật khẩu Phụ huynh để thoát Chế độ Bé)
+        [HttpPost("{id}/verify-parent-exit")]
+        [AllowAnonymous]
+        public async Task<IActionResult> VerifyParentExit(int id, [FromBody] VerifyParentExitModel model)
+        {
+            if (string.IsNullOrWhiteSpace(model.Password))
+                return BadRequest(new { success = false, message = "Vui lòng nhập mật khẩu phụ huynh!" });
+
+            var child = await _context.ChildProfiles.FindAsync(id);
+            if (child == null)
+                return NotFound(new { success = false, message = "Không tìm thấy hồ sơ thiết bị trẻ em!" });
+
+            User? parentUser = null;
+            if (!string.IsNullOrEmpty(child.ParentId))
+            {
+                parentUser = await _userManager.FindByIdAsync(child.ParentId);
+                if (parentUser == null)
+                {
+                    parentUser = await _userManager.FindByNameAsync(child.ParentId);
+                }
+            }
+
+            if (parentUser == null)
+            {
+                parentUser = await _userManager.FindByNameAsync("parent1787");
+            }
+
+            if (parentUser == null)
+            {
+                var parents = await _userManager.GetUsersInRoleAsync("Parent");
+                parentUser = parents.FirstOrDefault();
+            }
+
+            if (parentUser == null)
+                return BadRequest(new { success = false, message = "Không tìm thấy tài khoản phụ huynh quản lý!" });
+
+            var isValid = await _userManager.CheckPasswordAsync(parentUser, model.Password);
+            if (!isValid)
+            {
+                return Unauthorized(new { success = false, message = "Mật khẩu phụ huynh không chính xác! Con không được phép thoát." });
+            }
+
+            return Ok(new { success = true, message = "Xác thực phụ huynh thành công. Cho phép thoát chế độ bảo vệ." });
+        }
+    }
+
+    public class VerifyParentExitModel
+    {
+        public string Password { get; set; } = string.Empty;
     }
 
     public class ConfirmUnpairRequest
