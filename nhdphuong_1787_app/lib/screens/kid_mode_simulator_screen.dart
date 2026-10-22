@@ -69,8 +69,15 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
   bool _isSyncing = false;
   List<AppRule> _appRules = [];
   List<ScreenTimeSchedule> _schedules = [];
-  final bool _simulateCurfewActive = false;
+  int _usedSecondsToday = 0;
+  int get _usedMinutesToday => _usedSecondsToday ~/ 60;
   final ScrollController _scrollController = ScrollController();
+
+  String _getTodayStorageKey() {
+    final now = DateTime.now();
+    final dateStr = '${now.year}_${now.month.toString().padLeft(2, '0')}_${now.day.toString().padLeft(2, '0')}';
+    return 'child_used_sec_${widget.childId}_$dateStr';
+  }
 
   @override
   void initState() {
@@ -160,12 +167,31 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
 
   Future<void> _checkForegroundAndBlock() async {
     if (!mounted) return;
+
+    // Đếm thời gian sử dụng máy thực tế trong ngày (khi máy không bị khóa và đang trong khung giờ cho phép)
+    if (!_isLockedByParent) {
+      final prevMinutes = _usedMinutesToday;
+      _usedSecondsToday++;
+      if (_usedMinutesToday != prevMinutes && mounted) {
+        setState(() {});
+      }
+      if (_usedSecondsToday % 10 == 0) {
+        SharedPreferences.getInstance().then((prefs) {
+          prefs.setInt(_getTodayStorageKey(), _usedSecondsToday);
+        });
+      }
+    }
+
     try {
       final currentPkg = await AppBlockerService.getForegroundPackage();
       if (currentPkg == null || currentPkg.isEmpty) return;
 
-      // Đang ở trong chính ứng dụng ChildGuard
-      if (currentPkg == 'com.nhdphuong1787.nhdphuong_1787_app') return;
+      // Đang ở trong chính ứng dụng ChildGuard hoặc màn hình cài đặt cấp quyền hệ thống
+      if (currentPkg == 'com.nhdphuong1787.nhdphuong_1787_app' ||
+          currentPkg.contains('com.android.settings') ||
+          currentPkg.contains('permissioncontroller')) {
+        return;
+      }
 
       // 1. Phụ huynh bật Khóa Toàn Bộ Máy từ xa
       if (_isLockedByParent) {
@@ -174,7 +200,36 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
         return;
       }
 
-      // 2. Kiểm tra xem app bé mở có nằm trong danh sách Bị Khóa hay không
+      // 2. Kiểm tra Thời Gian Biểu & Giới Hạn Thời Lượng Ngày
+      final scheduleViolation = _getScheduleBlockReason();
+      if (scheduleViolation != null) {
+        debugPrint('[AppBlocker] Vi phạm Thời gian biểu khi mở $currentPkg: $scheduleViolation');
+        await AppBlockerService.bringAppToFront();
+
+        final now = DateTime.now();
+        if (_lastBlockAlertSent == null || now.difference(_lastBlockAlertSent!).inSeconds >= 15) {
+          _lastBlockAlertSent = now;
+          ChildService.sendAlert(AlertLog(
+            id: 0,
+            childProfileId: widget.childId,
+            alertType: 'SCHEDULE_BLOCKED',
+            severity: 'Warning',
+            value: currentPkg,
+            message: 'Bé ${widget.childName} cố mở ứng dụng ngoài khung giờ hoặc quá thời lượng cho phép: $scheduleViolation',
+            createdAt: now,
+          ));
+        }
+
+        if (!_isShowingBlockOverlay && mounted) {
+          _showEnforcedBlockDialog(
+            'Ngoài Giờ Được Phép',
+            customReason: scheduleViolation,
+          );
+        }
+        return;
+      }
+
+      // 3. Kiểm tra xem app bé mở có nằm trong danh sách Bị Khóa hay không
       final allRules = _getEffectiveRules();
       for (final rule in allRules) {
         if (!rule.isActive) continue;
@@ -211,7 +266,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     }
   }
 
-  void _showEnforcedBlockDialog(String appName) {
+  void _showEnforcedBlockDialog(String appName, {String? customReason}) {
     if (_isShowingBlockOverlay) return;
     _isShowingBlockOverlay = true;
     showDialog(
@@ -219,17 +274,25 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.block_rounded, color: Colors.red, size: 28),
-            SizedBox(width: 10),
+            Icon(
+              customReason != null ? Icons.schedule_rounded : Icons.block_rounded,
+              color: Colors.red,
+              size: 28,
+            ),
+            const SizedBox(width: 10),
             Expanded(
-              child: Text('ỨNG DỤNG BỊ CHẶN', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 16)),
+              child: Text(
+                customReason != null ? 'GIỚI HẠN THỜI GIAN BIỂU' : 'ỨNG DỤNG BỊ CHẶN',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 16),
+              ),
             ),
           ],
         ),
         content: Text(
-          'Ứng dụng "$appName" đã bị Phụ huynh khóa hoàn toàn trên thiết bị này.\n\nHệ thống ChildGuard đã tự động can thiệp và ngăn chặn. Con hãy tập trung học bài hoặc xin phép Ba Mẹ nhé!',
+          customReason ??
+              'Ứng dụng "$appName" đã bị Phụ huynh khóa hoàn toàn trên thiết bị này.\n\nHệ thống ChildGuard đã tự động can thiệp và ngăn chặn. Con hãy tập trung học bài hoặc xin phép Ba Mẹ nhé!',
           style: const TextStyle(fontSize: 13, height: 1.4),
         ),
         actions: [
@@ -336,8 +399,14 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedCode = prefs.getString('paired_code');
-      if (savedCode != null && savedCode.isNotEmpty) {
-        if (mounted) setState(() => _pairingCode = savedCode);
+      final savedUsedSec = prefs.getInt(_getTodayStorageKey()) ?? 0;
+      if (mounted) {
+        setState(() {
+          if (savedCode != null && savedCode.isNotEmpty) {
+            _pairingCode = savedCode;
+          }
+          _usedSecondsToday = savedUsedSec;
+        });
       }
 
       final rules = await ChildService.getRules(widget.childId);
@@ -345,7 +414,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
       if (mounted) {
         setState(() {
           if (rules.isNotEmpty) _appRules = rules;
-          if (schedules.isNotEmpty) _schedules = schedules;
+          _schedules = schedules;
         });
       }
     } catch (_) {}
@@ -712,15 +781,48 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     );
   }
 
-  /// THẺ 1: MỐC THỜI GIAN ĐƯỢC PHÉP SỬ DỤNG
+  /// THẺ 1: MỐC THỜI GIAN ĐƯỢC PHÉP SỬ DỤNG (HOẠT ĐỘNG THỰC TẾ TỪ DỮ LIỆU SERVER)
   Widget _buildAllowedScheduleCard() {
-    final activeBlocking = _findCurrentBlockingSchedule('SocialMedia');
-    final isCurfew = activeBlocking != null;
+    final activeSchedules = _schedules.where((s) => s.isActive).toList();
+    final currentAllowed = _findCurrentAllowedSchedule();
+    final maxMinutes = _getMaxDailyMinutes();
+    final isLimitExceeded = maxMinutes > 0 && _usedMinutesToday >= maxMinutes;
+    final hasActiveScheduleRules = activeSchedules.isNotEmpty;
+    final isOutsideHours = hasActiveScheduleRules && currentAllowed == null;
+    final isRestricted = isOutsideHours || isLimitExceeded;
+
+    String subtitleText;
+    if (!hasActiveScheduleRules) {
+      subtitleText = 'Phụ huynh chưa đặt giới hạn khung giờ hôm nay';
+    } else if (isLimitExceeded) {
+      subtitleText = 'Đã sử dụng hết tổng thời lượng cho phép hôm nay ($maxMinutes phút)';
+    } else if (currentAllowed != null) {
+      final sStart = _formatShortTime(currentAllowed.allowedStartTime);
+      final sEnd = _formatShortTime(currentAllowed.allowedEndTime);
+      subtitleText = 'Khung giờ cho phép hôm nay: $sStart - $sEnd';
+    } else {
+      final windows = activeSchedules
+          .map((s) => '${_formatShortTime(s.allowedStartTime)} - ${_formatShortTime(s.allowedEndTime)}')
+          .join(', ');
+      subtitleText = 'Đang ngoài khung giờ cho phép ($windows)';
+    }
+
+    String badgeText;
+    if (isLimitExceeded) {
+      badgeText = '🔴 HẾT GIỜ';
+    } else if (isOutsideHours) {
+      badgeText = '⏰ NGOÀI GIỜ';
+    } else {
+      badgeText = '🟢 ĐƯỢC PHÉP';
+    }
+
+    final remainingMinutes = maxMinutes > 0 ? (maxMinutes - _usedMinutesToday).clamp(0, maxMinutes) : 0;
+    final progressValue = maxMinutes > 0 ? (_usedMinutesToday / maxMinutes).clamp(0.0, 1.0) : 0.0;
 
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      color: isCurfew ? const Color(0xFFFFFBEB) : Colors.white,
+      color: isRestricted ? const Color(0xFFFFFBEB) : Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -731,12 +833,12 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: isCurfew ? const Color(0xFFFEF3C7) : const Color(0xFFEEF2FF),
+                    color: isRestricted ? const Color(0xFFFEF3C7) : const Color(0xFFEEF2FF),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    isCurfew ? Icons.nightlight_round : Icons.alarm_on_rounded,
-                    color: isCurfew ? const Color(0xFFD97706) : const Color(0xFF4338CA),
+                    isRestricted ? Icons.lock_clock_rounded : Icons.alarm_on_rounded,
+                    color: isRestricted ? const Color(0xFFD97706) : const Color(0xFF4338CA),
                     size: 22,
                   ),
                 ),
@@ -750,11 +852,11 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF0F172A)),
                       ),
                       Text(
-                        isCurfew ? 'Đang trong giờ giới nghiêm / nghỉ ngơi' : 'Khung giờ an toàn hôm nay: 07:30 - 21:30',
+                        subtitleText,
                         style: TextStyle(
                           fontSize: 12,
-                          color: isCurfew ? const Color(0xFFB45309) : const Color(0xFF64748B),
-                          fontWeight: isCurfew ? FontWeight.bold : FontWeight.normal,
+                          color: isRestricted ? const Color(0xFFB45309) : const Color(0xFF64748B),
+                          fontWeight: isRestricted ? FontWeight.bold : FontWeight.normal,
                         ),
                       ),
                     ],
@@ -763,15 +865,15 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isCurfew ? Colors.amber[100] : Colors.green[100],
+                    color: isRestricted ? Colors.amber[100] : Colors.green[100],
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    isCurfew ? '⏰ GIỚI HẠN' : '🟢 ĐƯỢC PHÉP',
+                    badgeText,
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: isCurfew ? Colors.amber[900] : Colors.green[800],
+                      color: isRestricted ? Colors.amber[900] : Colors.green[800],
                     ),
                   ),
                 ),
@@ -779,10 +881,10 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
             ),
             const SizedBox(height: 14),
 
-            // Tiến trình thời gian sử dụng hôm nay
-            const Row(
+            // Tiến trình thời gian sử dụng thực tế hôm nay
+            Row(
               children: [
-                Expanded(
+                const Expanded(
                   child: Text(
                     'Thời lượng sử dụng hôm nay:',
                     style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
@@ -790,50 +892,80 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                SizedBox(width: 8),
-                Text('35 phút / 120 phút', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                const SizedBox(width: 8),
+                Text(
+                  maxMinutes > 0
+                      ? '$_usedMinutesToday phút / $maxMinutes phút'
+                      : '$_usedMinutesToday phút (Không giới hạn)',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                ),
               ],
             ),
             const SizedBox(height: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: const LinearProgressIndicator(
-                value: 35 / 120,
+              child: LinearProgressIndicator(
+                value: progressValue,
                 minHeight: 8,
-                backgroundColor: Color(0xFFF1F5F9),
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+                backgroundColor: const Color(0xFFF1F5F9),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  isLimitExceeded ? Colors.red : (isOutsideHours ? Colors.amber : const Color(0xFF10B981)),
+                ),
               ),
             ),
             const SizedBox(height: 8),
-            const Row(
+            Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Thời gian còn lại:', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                Text('Còn 85 phút', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF059669))),
+                const Text('Thời gian còn lại:', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                Text(
+                  maxMinutes > 0
+                      ? (remainingMinutes > 0 ? 'Còn $remainingMinutes phút' : 'Đã hết thời gian hôm nay!')
+                      : 'Tự do theo lịch Phụ huynh',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: isLimitExceeded ? Colors.red : const Color(0xFF059669),
+                  ),
+                ),
               ],
             ),
 
-            if (_schedules.isNotEmpty) ...[
+            if (activeSchedules.isNotEmpty) ...[
               const Divider(height: 18),
               Column(
-                children: _schedules.map((s) {
+                children: activeSchedules.map((s) {
                   final isCurrent = _isScheduleCurrentlyActive(s);
-                  final sStart = s.allowedStartTime.length >= 5 ? s.allowedStartTime.substring(0, 5) : s.allowedStartTime;
-                  final sEnd = s.allowedEndTime.length >= 5 ? s.allowedEndTime.substring(0, 5) : s.allowedEndTime;
+                  final sStart = _formatShortTime(s.allowedStartTime);
+                  final sEnd = _formatShortTime(s.allowedEndTime);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 4.0),
                     child: Row(
                       children: [
-                        Icon(isCurrent ? Icons.alarm_on : Icons.access_time, size: 14, color: isCurrent ? Colors.amber[800] : Colors.grey),
+                        Icon(
+                          isCurrent ? Icons.check_circle_rounded : Icons.access_time,
+                          size: 14,
+                          color: isCurrent ? Colors.green[700] : Colors.amber[800],
+                        ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            '${s.scheduleTitle} ($sStart - $sEnd)',
-                            style: TextStyle(fontSize: 11, color: isCurrent ? Colors.amber[900] : Colors.black87, fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal),
+                            '${s.scheduleTitle} (${s.dayOfWeek}: $sStart - $sEnd • Tối đa ${s.maxDailyHours}h)',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isCurrent ? Colors.green[900] : Colors.black87,
+                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                            ),
                           ),
                         ),
-                        if (isCurrent)
-                          Text('Đang áp dụng', style: TextStyle(fontSize: 10, color: Colors.amber[900], fontWeight: FontWeight.bold)),
+                        Text(
+                          isCurrent ? 'Đang trong giờ' : 'Ngoài giờ',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isCurrent ? Colors.green[800] : Colors.amber[900],
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   );
@@ -1090,6 +1222,26 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
           backgroundColor: Colors.red,
         ),
       );
+      return;
+    }
+
+    // Kiểm tra Thời Gian Biểu & Giới Hạn Thời Lượng Ngày trước khi mở ứng dụng
+    final scheduleViolation = _getScheduleBlockReason();
+    if (scheduleViolation != null) {
+      _showEnforcedBlockDialog(rule.appName, customReason: scheduleViolation);
+      final now = DateTime.now();
+      if (_lastBlockAlertSent == null || now.difference(_lastBlockAlertSent!).inSeconds >= 10) {
+        _lastBlockAlertSent = now;
+        ChildService.sendAlert(AlertLog(
+          id: 0,
+          childProfileId: widget.childId,
+          alertType: 'SCHEDULE_BLOCKED',
+          severity: 'Warning',
+          value: rule.appName,
+          message: 'Bé ${widget.childName} cố mở ${rule.appName} ngoài khung giờ hoặc quá thời lượng cho phép: $scheduleViolation',
+          createdAt: now,
+        ));
+      }
       return;
     }
 
@@ -1488,6 +1640,10 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     );
   }
 
+  String _formatShortTime(String raw) {
+    return raw.length >= 5 ? raw.substring(0, 5) : raw;
+  }
+
   bool _isScheduleCurrentlyActive(ScreenTimeSchedule s) {
     if (!s.isActive) return false;
     final now = DateTime.now();
@@ -1527,35 +1683,48 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     }
   }
 
-  ScreenTimeSchedule? _findCurrentBlockingSchedule(String category) {
-    if (_simulateCurfewActive && category != 'Education') {
-      final now = DateTime.now();
-      return ScreenTimeSchedule(
-        id: -1,
-        childProfileId: widget.childId,
-        scheduleTitle: 'Khung Giờ Học Bài & Giới Nghiêm (Chế độ test)',
-        dayOfWeek: 'Hôm nay',
-        allowedStartTime: '${now.hour.toString().padLeft(2, '0')}:00:00',
-        allowedEndTime: '${((now.hour + 1) % 24).toString().padLeft(2, '0')}:00:00',
-      );
-    }
-
+  /// Tìm lịch biểu cho phép đang có hiệu lực tại thời điểm hiện tại
+  ScreenTimeSchedule? _findCurrentAllowedSchedule() {
     for (final s in _schedules) {
       if (_isScheduleCurrentlyActive(s)) {
-        final titleLower = s.scheduleTitle.toLowerCase();
-        final isCurfewOrStudy = titleLower.contains('học') ||
-            titleLower.contains('ngủ') ||
-            titleLower.contains('khóa') ||
-            titleLower.contains('giới nghiêm') ||
-            titleLower.contains('curfew') ||
-            titleLower.contains('sleep') ||
-            titleLower.contains('bedtime');
-
-        if (isCurfewOrStudy && category != 'Education') {
-          return s;
-        }
+        return s;
       }
     }
+    return null;
+  }
+
+  /// Lấy tổng số phút tối đa được phép sử dụng trong ngày từ cấu hình của Phụ huynh
+  int _getMaxDailyMinutes() {
+    final activeSchedules = _schedules.where((s) => s.isActive).toList();
+    if (activeSchedules.isEmpty) return 0;
+
+    final current = _findCurrentAllowedSchedule();
+    if (current != null) {
+      return current.maxDailyHours * 60;
+    }
+    return activeSchedules.first.maxDailyHours * 60;
+  }
+
+  /// Kiểm tra xem hiện tại bé có đang vi phạm thời gian biểu hoặc vượt quá giới hạn ngày không
+  String? _getScheduleBlockReason() {
+    final activeSchedules = _schedules.where((s) => s.isActive).toList();
+    if (activeSchedules.isEmpty) return null;
+
+    final maxMinutes = _getMaxDailyMinutes();
+    if (maxMinutes > 0 && _usedMinutesToday >= maxMinutes) {
+      return 'Con đã sử dụng hết $_usedMinutesToday / $maxMinutes phút được phép trong ngày hôm nay.\n\nHãy nghỉ ngơi bảo vệ mắt hoặc xin phép Ba Mẹ nếu cần thêm thời gian nhé!';
+    }
+
+    final currentAllowed = _findCurrentAllowedSchedule();
+    if (currentAllowed == null) {
+      final now = DateTime.now();
+      final nowStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final windows = activeSchedules
+          .map((s) => '${s.scheduleTitle} (${s.dayOfWeek}: ${_formatShortTime(s.allowedStartTime)} - ${_formatShortTime(s.allowedEndTime)})')
+          .join('\n• ');
+      return 'Hiện tại là $nowStr, nằm ngoài khung giờ được phép sử dụng máy do Ba Mẹ thiết lập:\n• $windows\n\nCon chỉ được mở ứng dụng khi đến đúng khung giờ cho phép của Ba Mẹ!';
+    }
+
     return null;
   }
 }

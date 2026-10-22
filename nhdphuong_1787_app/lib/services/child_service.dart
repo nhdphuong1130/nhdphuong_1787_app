@@ -131,6 +131,14 @@ class ChildService {
     return response.statusCode == 200;
   }
 
+  static Future<bool> updateSchedule(ScreenTimeSchedule schedule) async {
+    final response = await ApiClient.put(
+      ConfigUrl.screenTimeItem(schedule.id),
+      body: schedule.toJson(),
+    );
+    return response.statusCode == 200;
+  }
+
   static Future<bool> deleteSchedule(int id) async {
     final response = await ApiClient.delete(ConfigUrl.screenTimeItem(id));
     return response.statusCode == 200;

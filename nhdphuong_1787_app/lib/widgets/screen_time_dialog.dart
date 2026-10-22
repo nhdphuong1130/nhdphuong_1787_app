@@ -35,56 +35,110 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
     });
   }
 
-  Future<void> _showAddScheduleDialog() async {
-    final titleCtrl = TextEditingController(text: 'Khung giờ học bài tối');
-    String dayOfWeek = 'Thứ 2 - Thứ 6';
-    TimeOfDay startTime = const TimeOfDay(hour: 19, minute: 0);
-    TimeOfDay endTime = const TimeOfDay(hour: 21, minute: 0);
+  TimeOfDay _parseTime(String timeStr, {TimeOfDay fallback = const TimeOfDay(hour: 7, minute: 0)}) {
+    final parts = timeStr.split(':');
+    if (parts.length >= 2) {
+      final h = int.tryParse(parts[0]) ?? fallback.hour;
+      final m = int.tryParse(parts[1]) ?? fallback.minute;
+      return TimeOfDay(hour: h.clamp(0, 23), minute: m.clamp(0, 59));
+    }
+    return fallback;
+  }
+
+  Future<void> _showScheduleFormDialog({ScreenTimeSchedule? existing}) async {
+    final isEditing = existing != null;
+    final titleCtrl = TextEditingController(
+      text: existing?.scheduleTitle ?? 'Khung giờ được phép dùng máy',
+    );
+    String dayOfWeek = existing?.dayOfWeek ?? 'Tất cả các ngày';
+    if (!const ['Thứ 2 - Thứ 6', 'Thứ 7 - Chủ Nhật', 'Tất cả các ngày'].contains(dayOfWeek)) {
+      dayOfWeek = 'Tất cả các ngày';
+    }
+    TimeOfDay startTime = existing != null
+        ? _parseTime(existing.allowedStartTime, fallback: const TimeOfDay(hour: 7, minute: 0))
+        : const TimeOfDay(hour: 7, minute: 0);
+    TimeOfDay endTime = existing != null
+        ? _parseTime(existing.allowedEndTime, fallback: const TimeOfDay(hour: 21, minute: 0))
+        : const TimeOfDay(hour: 21, minute: 0);
+    int maxDailyHours = existing?.maxDailyHours ?? 2;
+    if (!const [1, 2, 3, 4, 6, 8, 12].contains(maxDailyHours)) {
+      maxDailyHours = 2;
+    }
 
     await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlgState) => AlertDialog(
-          title: const Text('Thêm Lịch Biểu Giờ Dùng Máy'),
+          title: Text(isEditing ? 'Chỉnh Sửa Lịch Biểu Dùng Máy' : 'Thêm Lịch Biểu Giờ Dùng Máy'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: titleCtrl,
-                  decoration: const InputDecoration(labelText: 'Tên lịch biểu'),
+                  decoration: const InputDecoration(
+                    labelText: 'Tên lịch biểu',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: dayOfWeek,
-                  decoration: const InputDecoration(labelText: 'Các ngày trong tuần'),
+                  decoration: const InputDecoration(
+                    labelText: 'Các ngày áp dụng',
+                    border: OutlineInputBorder(),
+                  ),
                   items: const [
+                    DropdownMenuItem(value: 'Tất cả các ngày', child: Text('Mỗi ngày trong tuần')),
                     DropdownMenuItem(value: 'Thứ 2 - Thứ 6', child: Text('Thứ 2 - Thứ 6 (Ngày học)')),
                     DropdownMenuItem(value: 'Thứ 7 - Chủ Nhật', child: Text('Thứ 7 - Chủ Nhật (Cuối tuần)')),
-                    DropdownMenuItem(value: 'Tất cả các ngày', child: Text('Mỗi ngày trong tuần')),
                   ],
                   onChanged: (val) => setDlgState(() => dayOfWeek = val!),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  initialValue: maxDailyHours,
+                  decoration: const InputDecoration(
+                    labelText: 'Giới hạn tổng thời lượng / ngày',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('Tối đa 1 giờ / ngày (60 phút)')),
+                    DropdownMenuItem(value: 2, child: Text('Tối đa 2 giờ / ngày (120 phút)')),
+                    DropdownMenuItem(value: 3, child: Text('Tối đa 3 giờ / ngày (180 phút)')),
+                    DropdownMenuItem(value: 4, child: Text('Tối đa 4 giờ / ngày (240 phút)')),
+                    DropdownMenuItem(value: 6, child: Text('Tối đa 6 giờ / ngày (360 phút)')),
+                    DropdownMenuItem(value: 8, child: Text('Tối đa 8 giờ / ngày (480 phút)')),
+                    DropdownMenuItem(value: 12, child: Text('Tối đa 12 giờ / ngày (720 phút)')),
+                  ],
+                  onChanged: (val) => setDlgState(() => maxDailyHours = val!),
                 ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.play_circle_outline, size: 18),
                         onPressed: () async {
                           final t = await showTimePicker(context: ctx, initialTime: startTime);
                           if (t != null) setDlgState(() => startTime = t);
                         },
-                        child: Text('Bắt đầu: ${startTime.format(ctx)}'),
+                        label: Text(
+                          'Từ: ${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: OutlinedButton(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.stop_circle_outlined, size: 18),
                         onPressed: () async {
                           final t = await showTimePicker(context: ctx, initialTime: endTime);
                           if (t != null) setDlgState(() => endTime = t);
                         },
-                        child: Text('Kết thúc: ${endTime.format(ctx)}'),
+                        label: Text(
+                          'Đến: ${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}',
+                        ),
                       ),
                     ),
                   ],
@@ -96,20 +150,26 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
             TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Hủy')),
             FilledButton(
               onPressed: () async {
-                if (titleCtrl.text.isEmpty) return;
+                if (titleCtrl.text.trim().isEmpty) return;
                 Navigator.of(ctx).pop();
                 final sched = ScreenTimeSchedule(
-                  id: 0,
+                  id: existing?.id ?? 0,
                   childProfileId: widget.childId,
                   scheduleTitle: titleCtrl.text.trim(),
                   dayOfWeek: dayOfWeek,
                   allowedStartTime: '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}:00',
                   allowedEndTime: '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}:00',
+                  maxDailyHours: maxDailyHours,
+                  isActive: existing?.isActive ?? true,
                 );
-                await ChildService.createSchedule(sched);
+                if (isEditing) {
+                  await ChildService.updateSchedule(sched);
+                } else {
+                  await ChildService.createSchedule(sched);
+                }
                 _loadSchedules();
               },
-              child: const Text('Lưu Lịch'),
+              child: Text(isEditing ? 'Cập Nhật' : 'Lưu Lịch'),
             ),
           ],
         ),
@@ -127,7 +187,7 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: 'Thêm lịch',
-              onPressed: _showAddScheduleDialog,
+              onPressed: () => _showScheduleFormDialog(),
             ),
           ],
         ),
@@ -143,7 +203,7 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
                         const Text('Chưa có lịch biểu nào.'),
                         const SizedBox(height: 12),
                         FilledButton.icon(
-                          onPressed: _showAddScheduleDialog,
+                          onPressed: () => _showScheduleFormDialog(),
                           icon: const Icon(Icons.add),
                           label: const Text('Tạo Lịch Biểu Mới'),
                         ),
@@ -155,11 +215,19 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
                     itemCount: _schedules.length,
                     itemBuilder: (ctx, i) {
                       final item = _schedules[i];
+                      final startFmt = item.allowedStartTime.length >= 5
+                          ? item.allowedStartTime.substring(0, 5)
+                          : item.allowedStartTime;
+                      final endFmt = item.allowedEndTime.length >= 5
+                          ? item.allowedEndTime.substring(0, 5)
+                          : item.allowedEndTime;
+
                       return Card(
                         elevation: 1.5,
                         margin: const EdgeInsets.only(bottom: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         child: ListTile(
+                          onTap: () => _showScheduleFormDialog(existing: item),
                           leading: CircleAvatar(
                             backgroundColor: item.isActive ? const Color(0xFF4F46E5) : Colors.grey[400],
                             child: const Icon(Icons.access_time_filled, color: Colors.white),
@@ -193,12 +261,17 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
                             ],
                           ),
                           subtitle: Text(
-                            '${item.dayOfWeek}\n⏰ Khung giờ: ${item.allowedStartTime.substring(0, 5)} - ${item.allowedEndTime.substring(0, 5)} (Tối đa ${item.maxDailyHours}h)',
+                            '${item.dayOfWeek}\n⏰ Khung giờ cho phép: $startFmt - $endFmt (Tối đa ${item.maxDailyHours}h / ${item.maxDailyHours * 60}p)',
                             style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                           ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, color: Color(0xFF4F46E5), size: 20),
+                                tooltip: 'Chỉnh sửa lịch',
+                                onPressed: () => _showScheduleFormDialog(existing: item),
+                              ),
                               Transform.scale(
                                 scale: 0.8,
                                 child: Switch(
@@ -212,6 +285,7 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
                               ),
                               IconButton(
                                 icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                tooltip: 'Xóa lịch',
                                 onPressed: () async {
                                   await ChildService.deleteSchedule(item.id);
                                   _loadSchedules();

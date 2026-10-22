@@ -124,10 +124,10 @@ namespace nhdphuong_1787_api.Controllers
             var defaultSchedule = new ScreenTimeSchedule
             {
                 ChildProfileId = model.Id,
-                ScheduleTitle = "Khung giờ học bài tối",
-                DayOfWeek = "Thứ 2 - Thứ 6",
-                AllowedStartTime = new TimeSpan(19, 0, 0),
-                AllowedEndTime = new TimeSpan(21, 0, 0),
+                ScheduleTitle = "Khung giờ được phép dùng máy",
+                DayOfWeek = "Tất cả các ngày",
+                AllowedStartTime = new TimeSpan(7, 0, 0),
+                AllowedEndTime = new TimeSpan(22, 0, 0),
                 MaxDailyHours = 2,
                 IsActive = true
             };
