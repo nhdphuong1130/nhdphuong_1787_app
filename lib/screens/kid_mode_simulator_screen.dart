@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/alert_log.dart';
 import '../services/child_service.dart';
 import '../widgets/eye_care_overlay.dart';
+import 'noise_meter_screen.dart';
 
 class KidModeSimulatorScreen extends StatefulWidget {
   final int childId;
@@ -22,6 +24,41 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
   String _currentDistance = '35 cm';
   bool _isLockedByParent = false;
   final int _battery = 82;
+  Timer? _syncTimer;
+  bool _isSyncing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncDeviceStatus();
+    // Đồng bộ trạng thái khóa máy và heartbeat với Server mỗi 2 giây
+    _syncTimer = Timer.periodic(const Duration(seconds: 2), (_) => _syncDeviceStatus());
+  }
+
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _syncDeviceStatus() async {
+    if (!mounted || _isSyncing) return;
+    _isSyncing = true;
+    try {
+      final res = await ChildService.sendHeartbeat(widget.childId, battery: _battery);
+      if (res != null && mounted) {
+        final serverLocked = res['isLocked'] == true;
+        if (serverLocked != _isLockedByParent) {
+          setState(() {
+            _isLockedByParent = serverLocked;
+          });
+        }
+      }
+    } catch (_) {
+    } finally {
+      _isSyncing = false;
+    }
+  }
 
   void _triggerEyeDangerTest() {
     setState(() {
@@ -207,15 +244,101 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // Kiểm tra Khóa màn hình từ xa
+                // KHU VỰC ĐO TIẾNG ỒN MICRO
                 Card(
-                  child: SwitchListTile(
-                    title: const Text('Thử nghiệm Khóa máy từ xa'),
-                    subtitle: const Text('Mô phỏng phản ứng khi bố mẹ gạt nút Khóa trên Dashboard'),
-                    value: _isLockedByParent,
-                    onChanged: (v) => setState(() => _isLockedByParent = v),
+                  color: Colors.teal[50],
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: const BorderSide(color: Colors.teal, width: 1.5),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(18.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(color: Colors.teal[200], shape: BoxShape.circle),
+                              child: const Icon(Icons.mic, color: Colors.teal, size: 26),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Đo Tiếng Ồn Micro (dB)',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.teal),
+                                  ),
+                                  Text(
+                                    'Giám sát môi trường âm thanh xung quanh bé',
+                                    style: TextStyle(fontSize: 12, color: Colors.teal),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(backgroundColor: Colors.teal),
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => NoiseMeterScreen(
+                                  childId: widget.childId,
+                                  childName: widget.childName,
+                                ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.graphic_eq),
+                          label: const Text('Mở Máy Đo Decibel (Microphone)'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
+                const SizedBox(height: 20),
+
+                // Trạng thái Khóa từ xa tự động nhận từ Server
+                Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Trạng thái Khóa từ xa:', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Chip(
+                              label: Text(_isLockedByParent ? 'ĐANG BỊ KHÓA' : 'HOẠT ĐỘNG BÌNH THƯỜNG'),
+                              backgroundColor: _isLockedByParent ? Colors.red[100] : Colors.green[100],
+                              labelStyle: TextStyle(
+                                color: _isLockedByParent ? Colors.red[800] : Colors.green[800],
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _isLockedByParent
+                              ? '⚠️ Phụ huynh vừa bấm Khóa từ máy quản lý. Thiết bị sẽ bị vô hiệu hóa!'
+                              : '✅ Đang đồng bộ thời gian thực mỗi 2s với máy quản lý.',
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
               ],
             ),
           ),

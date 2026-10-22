@@ -8,6 +8,7 @@ import 'registration_screen.dart';
 import 'admin_screen.dart';
 import 'staff_screen.dart';
 import 'parent_dashboard_screen.dart';
+import 'kid_mode_simulator_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -138,6 +139,70 @@ class _LoginScreenState extends State<LoginScreen> {
         SnackBar(content: Text(res['message'] ?? 'Đăng nhập thất bại!'), backgroundColor: Colors.red),
       );
     }
+  }
+
+  void _openKidModeDialog() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.child_care, color: Colors.deepPurple, size: 28),
+                SizedBox(width: 8),
+                Text(
+                  'Chọn Máy Trẻ Em Để Demo',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Điện thoại này sẽ đóng vai trò là "Máy Con", nhận lệnh khóa từ máy ảo (Laptop) và thử nghiệm AI bảo vệ mắt, đo tiếng ồn dB.',
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              tileColor: Colors.deepPurple[50],
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              leading: const CircleAvatar(backgroundColor: Colors.deepPurple, child: Text('Bo', style: TextStyle(color: Colors.white))),
+              title: const Text('Bé Bo (ID: 1)', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Thiết bị: Samsung Galaxy A15'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const KidModeSimulatorScreen(childId: 1, childName: 'Bé Bo')),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            ListTile(
+              tileColor: Colors.pink[50],
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              leading: const CircleAvatar(backgroundColor: Colors.pink, child: Text('Na', style: TextStyle(color: Colors.white))),
+              title: const Text('Bé Na (ID: 2)', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Thiết bị: iPad Gen 9'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const KidModeSimulatorScreen(childId: 2, childName: 'Bé Na')),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
   }
 
   void _fillAccount(String username, String pass) {
@@ -456,6 +521,26 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
+
+                  // Nút chuyển đổi nhanh thành Máy Con để Demo 2 máy
+                  FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.deepPurple[50],
+                      foregroundColor: Colors.deepPurple,
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: Colors.deepPurple[200]!),
+                      ),
+                    ),
+                    onPressed: _openKidModeDialog,
+                    icon: const Icon(Icons.phonelink_setup),
+                    label: const Text(
+                      '📱 Chế Độ Máy Trẻ Em (Để Điện Thoại Thật Demo)',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
                   InkWell(
                     onTap: _showApiConfigDialog,
                     borderRadius: BorderRadius.circular(8),

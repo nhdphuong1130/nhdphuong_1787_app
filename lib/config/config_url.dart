@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigUrl {
-  static const String defaultTunnelUrl = 'https://knowing-clicks-ice-financing.trycloudflare.com/api/';
+  static const String defaultTunnelUrl = 'https://aye-usgs-thread-remind.trycloudflare.com/api/';
   static String? _overrideBaseUrl;
 
   static String get baseUrl {
