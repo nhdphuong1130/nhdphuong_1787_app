@@ -300,6 +300,13 @@ namespace nhdphuong_1787_api.Controllers
             child.DeviceModel = model.DeviceModel ?? child.DeviceModel;
             child.IsOnline = true;
             child.UpdatedAt = DateTime.UtcNow;
+
+            var currentUserId = GetCurrentUserId();
+            if (!string.IsNullOrEmpty(currentUserId) && string.IsNullOrEmpty(child.ParentId))
+            {
+                child.ParentId = currentUserId;
+            }
+
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -308,6 +315,30 @@ namespace nhdphuong_1787_api.Controllers
                 message = $"Đã ghép nối thành công thiết bị với {child.FullName}!",
                 childProfileId = child.Id,
                 childName = child.FullName,
+                isLocked = child.IsLocked,
+                pairingCode = child.PairingCode
+            });
+        }
+
+        // GET: api/ChildProfileApi/check-pair/{pairingCode} (Máy con kiểm tra trạng thái ghép nối realtime)
+        [HttpGet("check-pair/{pairingCode}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CheckPairStatus(string pairingCode)
+        {
+            var cleanCode = pairingCode.Trim();
+            var child = await _context.ChildProfiles
+                .FirstOrDefaultAsync(c => c.PairingCode == cleanCode);
+
+            if (child == null)
+                return NotFound(new { isPaired = false, message = "Không tìm thấy mã ghép nối" });
+
+            return Ok(new
+            {
+                isPaired = child.IsOnline || !string.IsNullOrEmpty(child.ParentId),
+                childProfileId = child.Id,
+                childName = child.FullName,
+                childUsername = child.ChildUsername,
+                pairingCode = child.PairingCode,
                 isLocked = child.IsLocked
             });
         }
