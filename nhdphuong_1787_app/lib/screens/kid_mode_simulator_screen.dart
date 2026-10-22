@@ -77,6 +77,11 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     super.initState();
     _loadInitialData();
     _startRealSensors();
+    // Kiểm tra và đồng bộ trạng thái ngay lập tức khi khởi động
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncDeviceStatus();
+    });
+
     // Đồng bộ trạng thái khóa máy và đẩy telemetry ngầm lên Server mỗi 2.5 giây
     _syncTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) => _syncDeviceStatus());
   }
@@ -391,9 +396,66 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
     });
   }
 
+  bool _isProfileDeletedHandling = false;
+
+  /// Xử lý tự động khi hồ sơ của bé bị Phụ huynh xóa trên hệ thống
+  Future<void> _handleProfileDeletedByParent() async {
+    if (_isProfileDeletedHandling || !mounted) return;
+    _isProfileDeletedHandling = true;
+
+    _syncTimer?.cancel();
+    _sensorPollTimer?.cancel();
+    _appMonitorTimer?.cancel();
+    _noiseSub?.cancel();
+    _positionSub?.cancel();
+    _eyeDistanceService?.dispose();
+
+    // Xóa sạch thông tin ghép nối máy con trong SharedPreferences
+    await ChildService.clearLocalPairing();
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Hồ sơ đã được xóa',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Hồ sơ của bé ${widget.childName} đã bị Phụ huynh xóa hoặc hủy liên kết khỏi hệ thống.\n\nThiết bị sẽ tự động chuyển về màn hình đăng nhập để kết nối tài khoản mới.',
+          style: const TextStyle(fontSize: 15, height: 1.4),
+        ),
+        actions: [
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A)),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Đồng ý'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
   /// Đồng bộ cảm biến và trạng thái chạy ngầm 24/24 lên Server
   Future<void> _syncDeviceStatus() async {
-    if (!mounted || _isSyncing) return;
+    if (!mounted || _isSyncing || _isProfileDeletedHandling) return;
     _isSyncing = true;
     try {
       final res = await ChildService.sendHeartbeat(
@@ -405,6 +467,13 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
         eyeDistanceCm: _distanceCm,
       );
       if (res != null && mounted) {
+        // Nếu Server báo 404 hoặc hồ sơ đã bị xóa
+        if (res['isDeleted'] == true) {
+          debugPrint('[KidMode] Hồ sơ của bé ${widget.childId} đã bị xóa trên máy chủ -> Tự động hủy ghép nối và thoát!');
+          await _handleProfileDeletedByParent();
+          return;
+        }
+
         final serverLocked = res['isLocked'] == true;
         if (serverLocked != _isLockedByParent) {
           setState(() {

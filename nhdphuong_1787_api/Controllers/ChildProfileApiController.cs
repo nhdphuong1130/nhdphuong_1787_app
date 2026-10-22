@@ -224,6 +224,26 @@ namespace nhdphuong_1787_api.Controllers
             });
         }
 
+        // GET: api/ChildProfileApi/{id}/status (Kiểm tra hồ sơ còn tồn tại hay đã bị xóa)
+        [HttpGet("{id}/status")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CheckStatus(int id)
+        {
+            var child = await _context.ChildProfiles.FindAsync(id);
+            if (child == null)
+                return NotFound(new { exists = false, isDeleted = true, message = "Không tìm thấy thiết bị bé! Hồ sơ đã bị xóa." });
+
+            return Ok(new
+            {
+                exists = true,
+                isDeleted = false,
+                id = child.Id,
+                fullName = child.FullName,
+                isLocked = child.IsLocked,
+                pairingCode = child.PairingCode
+            });
+        }
+
         // POST: api/ChildProfileApi/{id}/heartbeat (Máy con gửi GPS, Pin, Online và nhận lệnh khóa + luật app)
         [HttpPost("{id}/heartbeat")]
         [AllowAnonymous]
@@ -234,7 +254,7 @@ namespace nhdphuong_1787_api.Controllers
                 .Include(c => c.Schedules)
                 .FirstOrDefaultAsync(c => c.Id == id);
             if (child == null)
-                return NotFound(new { message = "Không tìm thấy thiết bị bé!" });
+                return NotFound(new { isDeleted = true, exists = false, message = "Không tìm thấy thiết bị bé! Hồ sơ đã bị xóa." });
 
             child.BatteryLevel = model.BatteryLevel;
             if (model.Lat != 0.0 && model.Lng != 0.0)

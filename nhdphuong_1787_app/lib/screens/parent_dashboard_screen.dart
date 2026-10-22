@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/child_profile.dart';
 import '../models/alert_log.dart';
 import '../services/child_service.dart';
@@ -119,6 +120,10 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
 
     if (confirm == true) {
       await ChildService.deleteChild(child.id);
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getInt('paired_child_id') == child.id) {
+        await ChildService.clearLocalPairing();
+      }
       _loadData();
     }
   }

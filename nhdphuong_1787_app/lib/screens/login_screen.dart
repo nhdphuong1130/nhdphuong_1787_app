@@ -370,7 +370,27 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
 
     if (pairedId != null && pairedName != null) {
-      // Đã ghép nối trước đó -> Vào thẳng màn hình máy con
+      // Kiểm tra nhanh xem hồ sơ còn tồn tại trên máy chủ hay không
+      final check = await ChildService.sendHeartbeat(pairedId);
+      if (check != null && check['isDeleted'] == true) {
+        // Đã bị Phụ huynh xóa trên server -> Xóa sạch thông tin cũ và vào màn hình kết nối mới
+        await ChildService.clearLocalPairing();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ Hồ sơ của bé trước đây đã bị xóa. Vui lòng kết nối với tài khoản mới!'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const KidPairingScreen()),
+        );
+        return;
+      }
+
+      if (!mounted) return;
+      // Đã ghép nối trước đó và còn hợp lệ -> Vào thẳng màn hình máy con
       Navigator.push(
         context,
         MaterialPageRoute(

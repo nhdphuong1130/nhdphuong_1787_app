@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -18,15 +19,15 @@ class KidPairingScreen extends StatefulWidget {
 
 class _KidPairingScreenState extends State<KidPairingScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final TextEditingController _usernameController = TextEditingController(text: 'bebo1787');
-  final TextEditingController _passwordController = TextEditingController(text: 'Password123@');
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
 
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
 
-  // Mã ghép nối máy con xuất trình cho Phụ huynh quét
-  String _devicePairingCode = '178701';
+  // Mã ghép nối máy con xuất trình cho Phụ huynh quét (Sinh ngẫu nhiên 6 chữ số mới)
+  late String _devicePairingCode;
   Timer? _pairCheckTimer;
   bool _isCheckingPair = false;
 
@@ -34,17 +35,15 @@ class _KidPairingScreenState extends State<KidPairingScreen> with SingleTickerPr
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _initDeviceCode();
+    _devicePairingCode = _generateRandomPairingCode();
     // Định kỳ kiểm tra xem Phụ huynh đã quét và liên kết thành công chưa mỗi 3s
     _pairCheckTimer = Timer.periodic(const Duration(seconds: 3), (_) => _autoCheckPairStatus());
   }
 
-  Future<void> _initDeviceCode() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedCode = prefs.getString('paired_code');
-    if (savedCode != null && savedCode.isNotEmpty) {
-      if (mounted) setState(() => _devicePairingCode = savedCode);
-    }
+  String _generateRandomPairingCode() {
+    final rng = Random();
+    final code = 100000 + rng.nextInt(900000);
+    return code.toString();
   }
 
   @override
@@ -273,28 +272,17 @@ class _KidPairingScreenState extends State<KidPairingScreen> with SingleTickerPr
           ),
           const SizedBox(height: 18),
 
-          // Chọn nhanh mã mẫu cho thầy / bạn test demo
-          Wrap(
-            spacing: 8,
-            children: [
-              ActionChip(
-                avatar: const Icon(Icons.swap_horiz, size: 14),
-                label: const Text('Mã Bé Bo: 178701'),
-                onPressed: () => setState(() => _devicePairingCode = '178701'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.swap_horiz, size: 14),
-                label: const Text('Mã Bé Na: 178702'),
-                onPressed: () => setState(() => _devicePairingCode = '178702'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.swap_horiz, size: 14),
-                label: const Text('Mã Bé Bông: 779967'),
-                onPressed: () => setState(() => _devicePairingCode = '779967'),
-              ),
-            ],
+          // Làm mới mã QR ghép nối
+          OutlinedButton.icon(
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Đổi Mã Ghép Nối Mới'),
+            onPressed: () {
+              setState(() {
+                _devicePairingCode = _generateRandomPairingCode();
+              });
+            },
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
 
           // Nút kiểm tra trạng thái kết nối ngay
           FilledButton.icon(
@@ -391,44 +379,6 @@ class _KidPairingScreenState extends State<KidPairingScreen> with SingleTickerPr
                 onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
               ),
             ),
-          ),
-          const SizedBox(height: 14),
-
-          // Gợi ý tài khoản nhanh
-          Wrap(
-            spacing: 8,
-            children: [
-              ActionChip(
-                avatar: const Icon(Icons.bolt, size: 14),
-                label: const Text('Bé Bo (bebo1787)'),
-                onPressed: () {
-                  setState(() {
-                    _usernameController.text = 'bebo1787';
-                    _passwordController.text = 'Password123@';
-                  });
-                },
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.bolt, size: 14),
-                label: const Text('Bé Na (bena1787)'),
-                onPressed: () {
-                  setState(() {
-                    _usernameController.text = 'bena1787';
-                    _passwordController.text = 'Password123@';
-                  });
-                },
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.bolt, size: 14),
-                label: const Text('Bé Bông (b1787)'),
-                onPressed: () {
-                  setState(() {
-                    _usernameController.text = 'b1787';
-                    _passwordController.text = 'Password123@';
-                  });
-                },
-              ),
-            ],
           ),
           const SizedBox(height: 24),
 

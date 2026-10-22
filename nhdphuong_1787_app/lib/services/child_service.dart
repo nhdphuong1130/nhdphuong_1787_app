@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/config_url.dart';
 import '../models/child_profile.dart';
 import '../models/app_rule.dart';
@@ -184,9 +185,33 @@ class ChildService {
       );
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
+      } else if (response.statusCode == 404) {
+        // Hồ sơ bé đã bị xóa trên máy chủ
+        return {'isDeleted': true, 'message': 'Hồ sơ bé đã bị xóa khỏi hệ thống'};
       }
     } catch (_) {}
     return null;
+  }
+
+  /// Xóa sạch thông tin ghép nối máy trẻ lưu trong SharedPreferences
+  static Future<void> clearLocalPairing() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('paired_child_id');
+    await prefs.remove('paired_child_name');
+    await prefs.remove('paired_code');
+  }
+
+  /// Kiểm tra xem hồ sơ của bé còn tồn tại trên máy chủ hay không
+  static Future<bool> isChildProfileActive(int childId) async {
+    try {
+      final res = await sendHeartbeat(childId);
+      if (res != null && res['isDeleted'] == true) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return true;
+    }
   }
 
   // 6. Ghép nối thiết bị máy trẻ bằng PairingCode
