@@ -1,8 +1,35 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigUrl {
+  static String? _overrideBaseUrl;
+
   static String get baseUrl {
-    return dotenv.env['BASE_URL'] ?? 'http://10.0.2.2:5000/api/';
+    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
+      return _overrideBaseUrl!.endsWith('/') ? _overrideBaseUrl! : '$_overrideBaseUrl/';
+    }
+    final envUrl = dotenv.env['BASE_URL'] ?? 'https://knowing-clicks-ice-financing.trycloudflare.com/api/';
+    return envUrl.endsWith('/') ? envUrl : '$envUrl/';
+  }
+
+  static Future<void> init() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _overrideBaseUrl = prefs.getString('api_base_url');
+    } catch (_) {}
+  }
+
+  static Future<void> setCustomBaseUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    final formatted = url.trim().endsWith('/') ? url.trim() : '${url.trim()}/';
+    _overrideBaseUrl = formatted;
+    await prefs.setString('api_base_url', formatted);
+  }
+
+  static Future<void> resetToDefault() async {
+    final prefs = await SharedPreferences.getInstance();
+    _overrideBaseUrl = null;
+    await prefs.remove('api_base_url');
   }
 
   // Auth endpoints

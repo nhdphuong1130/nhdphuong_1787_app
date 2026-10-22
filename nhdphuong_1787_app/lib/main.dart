@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'config/config_url.dart';
 import 'screens/login_screen.dart';
 
 Future<void> main() async {
@@ -11,6 +12,8 @@ Future<void> main() async {
   } catch (e) {
     debugPrint('Không tìm thấy file .env, sử dụng cấu hình fallback mặc định.');
   }
+
+  await ConfigUrl.init();
 
   runApp(const ChildGuardApp());
 }
