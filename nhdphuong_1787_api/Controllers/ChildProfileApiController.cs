@@ -234,8 +234,11 @@ namespace nhdphuong_1787_api.Controllers
                 return NotFound(new { message = "Không tìm thấy thiết bị bé!" });
 
             child.BatteryLevel = model.BatteryLevel;
-            child.LastKnownLat = model.Lat;
-            child.LastKnownLng = model.Lng;
+            if (model.Lat != 0.0 && model.Lng != 0.0)
+            {
+                child.LastKnownLat = model.Lat;
+                child.LastKnownLng = model.Lng;
+            }
             if (model.NoiseDb > 0)
                 child.CurrentNoiseDb = Math.Round(model.NoiseDb, 1);
             if (model.EyeDistanceCm > 0)
@@ -487,8 +490,8 @@ namespace nhdphuong_1787_api.Controllers
     public class HeartbeatModel
     {
         public int BatteryLevel { get; set; } = 85;
-        public double Lat { get; set; } = 10.762622;
-        public double Lng { get; set; } = 106.660172;
+        public double Lat { get; set; } = 0.0;
+        public double Lng { get; set; } = 0.0;
         public double NoiseDb { get; set; } = 45.0;
         public double EyeDistanceCm { get; set; } = 35.0;
     }
