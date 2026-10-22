@@ -3,20 +3,36 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigUrl {
-  static const String defaultTunnelUrl = 'https://editing-poem-clusters-feof.trycloudflare.com/api/';
+  static const String defaultCloudUrl = 'https://nhdphuong-1787-api.onrender.com/api/';
+  static const String defaultTunnelUrl = defaultCloudUrl; // Giữ alias tương thích
   static String? _overrideBaseUrl;
 
   static List<String> get candidateUrls => [
-    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) _overrideBaseUrl!,
-    defaultTunnelUrl,
+    defaultCloudUrl,
+    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty && _overrideBaseUrl != defaultCloudUrl) _overrideBaseUrl!,
     'http://127.0.0.1:5000/api/',
     'http://10.0.2.2:5000/api/',
     'http://192.168.1.33:5000/api/',
   ];
 
+  static String cleanApiUrl(String input) {
+    String url = input.trim();
+    if (url.endsWith('/index.html')) {
+      url = url.substring(0, url.length - '/index.html'.length);
+    }
+    if (url.endsWith('/swagger')) {
+      url = url.substring(0, url.length - '/swagger'.length);
+    }
+    url = url.replaceAll(RegExp(r'/+$'), '');
+    if (!url.endsWith('/api')) {
+      url = '$url/api';
+    }
+    return '$url/';
+  }
+
   static String get baseUrl {
     if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
-      return _overrideBaseUrl!.endsWith('/') ? _overrideBaseUrl! : '$_overrideBaseUrl/';
+      return cleanApiUrl(_overrideBaseUrl!);
     }
     String? envUrl;
     try {
@@ -24,36 +40,47 @@ class ConfigUrl {
         envUrl = dotenv.env['BASE_URL'];
       }
     } catch (_) {}
-    envUrl ??= defaultTunnelUrl;
-    return envUrl.endsWith('/') ? envUrl : '$envUrl/';
+    envUrl ??= defaultCloudUrl;
+    return cleanApiUrl(envUrl);
   }
 
   static Future<void> init() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      _overrideBaseUrl = prefs.getString('api_base_url');
-    } catch (_) {}
+      final saved = prefs.getString('api_base_url');
+      if (saved != null && (saved.contains('192.168.') || saved.contains('trycloudflare.com') || saved.contains('127.0.0.1') || saved.contains('10.0.2.2'))) {
+        // Tự động chuyển đổi các địa chỉ cũ sang Render Cloud API
+        await prefs.setString('api_base_url', defaultCloudUrl);
+        _overrideBaseUrl = defaultCloudUrl;
+      } else if (saved != null && saved.isNotEmpty) {
+        _overrideBaseUrl = cleanApiUrl(saved);
+      } else {
+        _overrideBaseUrl = defaultCloudUrl;
+      }
+    } catch (_) {
+      _overrideBaseUrl = defaultCloudUrl;
+    }
   }
 
   static Future<void> setCustomBaseUrl(String url) async {
     final prefs = await SharedPreferences.getInstance();
-    final formatted = url.trim().endsWith('/') ? url.trim() : '${url.trim()}/';
+    final formatted = cleanApiUrl(url);
     _overrideBaseUrl = formatted;
     await prefs.setString('api_base_url', formatted);
   }
 
   static Future<void> resetToDefault() async {
     final prefs = await SharedPreferences.getInstance();
-    _overrideBaseUrl = null;
-    await prefs.remove('api_base_url');
+    _overrideBaseUrl = defaultCloudUrl;
+    await prefs.setString('api_base_url', defaultCloudUrl);
   }
 
   /// Kiểm tra 1 địa chỉ URL cụ thể có phản hồi không
   static Future<bool> testUrl(String url) async {
     try {
-      final formatted = url.trim().endsWith('/') ? url.trim() : '${url.trim()}/';
+      final formatted = cleanApiUrl(url);
       final res = await http.get(Uri.parse('${formatted}Authenticate/login')).timeout(
-        const Duration(seconds: 4),
+        const Duration(seconds: 5),
       );
       // Status 405 Method Not Allowed hoặc 200/400 tức là ASP.NET Core API đang phản hồi tốt
       return res.statusCode == 200 || res.statusCode == 405 || res.statusCode == 400;
