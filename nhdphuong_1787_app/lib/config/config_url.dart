@@ -3,8 +3,16 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigUrl {
-  static const String defaultTunnelUrl = 'https://aye-usgs-thread-remind.trycloudflare.com/api/';
+  static const String defaultTunnelUrl = 'https://editing-poem-clusters-feof.trycloudflare.com/api/';
   static String? _overrideBaseUrl;
+
+  static List<String> get candidateUrls => [
+    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) _overrideBaseUrl!,
+    defaultTunnelUrl,
+    'http://127.0.0.1:5000/api/',
+    'http://10.0.2.2:5000/api/',
+    'http://192.168.1.33:5000/api/',
+  ];
 
   static String get baseUrl {
     if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
@@ -40,28 +48,44 @@ class ConfigUrl {
     await prefs.remove('api_base_url');
   }
 
-  /// Kiểm tra xem địa chỉ API hiện tại có phản hồi không
-  static Future<bool> testConnection() async {
+  /// Kiểm tra 1 địa chỉ URL cụ thể có phản hồi không
+  static Future<bool> testUrl(String url) async {
     try {
-      final res = await http.get(Uri.parse('${baseUrl.replaceAll('/api/', '')}/index.html')).timeout(
-        const Duration(seconds: 5),
+      final formatted = url.trim().endsWith('/') ? url.trim() : '${url.trim()}/';
+      final res = await http.get(Uri.parse('${formatted}Authenticate/login')).timeout(
+        const Duration(seconds: 4),
       );
-      return res.statusCode == 200 || res.statusCode == 301 || res.statusCode == 302;
+      // Status 405 Method Not Allowed hoặc 200/400 tức là ASP.NET Core API đang phản hồi tốt
+      return res.statusCode == 200 || res.statusCode == 405 || res.statusCode == 400;
     } catch (_) {
-      try {
-        final res2 = await http.get(Uri.parse(login)).timeout(const Duration(seconds: 5));
-        return res2.statusCode != 0;
-      } catch (_) {
-        return false;
+      return false;
+    }
+  }
+
+  /// Kiểm tra xem địa chỉ API hiện tại có phản hồi không
+  static Future<bool> testConnection([String? targetUrl]) async {
+    return await testUrl(targetUrl ?? baseUrl);
+  }
+
+  /// Tự động quét và chọn endpoint đang hoạt động tốt nhất
+  static Future<String?> autoDiscoverWorkingUrl() async {
+    for (final candidate in candidateUrls) {
+      if (await testUrl(candidate)) {
+        await setCustomBaseUrl(candidate);
+        return candidate;
       }
     }
+    return null;
   }
 
   // Auth endpoints
   static String get login => '${baseUrl}Authenticate/login';
   static String get verifyOtp => '${baseUrl}Authenticate/verify-otp';
   static String get register => '${baseUrl}Authenticate/register';
+  static String get verifyRegisterOtp => '${baseUrl}Authenticate/verify-register-otp';
+  static String get resendRegisterOtp => '${baseUrl}Authenticate/resend-register-otp';
   static String get resendOtp => '${baseUrl}Authenticate/resend-otp';
+  static String get googleLogin => '${baseUrl}Authenticate/google-login';
 
   // Child Profile endpoints
   static String get childProfiles => '${baseUrl}ChildProfileApi';
@@ -69,6 +93,9 @@ class ConfigUrl {
   static String toggleLock(int id) => '${baseUrl}ChildProfileApi/$id/lock-toggle';
   static String heartbeat(int id) => '${baseUrl}ChildProfileApi/$id/heartbeat';
   static String get pairDevice => '${baseUrl}ChildProfileApi/pair';
+  static String get kidLogin => '${baseUrl}ChildProfileApi/kid-login';
+  static String requestUnpair(int id) => '${baseUrl}ChildProfileApi/$id/request-unpair';
+  static String confirmUnpair(int id) => '${baseUrl}ChildProfileApi/$id/confirm-unpair';
 
   // App Rules endpoints
   static String get appRules => '${baseUrl}AppRuleApi';
@@ -85,4 +112,10 @@ class ConfigUrl {
 
   // Alert Log endpoints
   static String get alertLogs => '${baseUrl}AlertLogApi';
+
+  // Admin endpoints
+  static String get adminStats => '${baseUrl}AdminApi/stats';
+  static String get adminUsers => '${baseUrl}AdminApi/users';
+  static String adminUser(String id) => '${baseUrl}AdminApi/users/$id';
+  static String get adminChildren => '${baseUrl}AdminApi/children';
 }
