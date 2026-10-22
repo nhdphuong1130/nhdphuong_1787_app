@@ -196,8 +196,8 @@ class _ChildFormDialogState extends State<ChildFormDialog> {
               batteryLevel: widget.child?.batteryLevel ?? 85,
               isOnline: widget.child?.isOnline ?? true,
               isLocked: widget.child?.isLocked ?? false,
-              lastKnownLat: widget.child?.lastKnownLat ?? 10.762622,
-              lastKnownLng: widget.child?.lastKnownLng ?? 106.660172,
+              lastKnownLat: widget.child?.lastKnownLat ?? 0.0,
+              lastKnownLng: widget.child?.lastKnownLng ?? 0.0,
               updatedAt: DateTime.now(),
             );
             widget.onSave(updated);

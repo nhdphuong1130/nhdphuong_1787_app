@@ -159,8 +159,8 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> with SingleTick
       batteryLevel: 85,
       isOnline: true,
       isLocked: false,
-      lastKnownLat: 10.762622,
-      lastKnownLng: 106.660172,
+      lastKnownLat: 0.0,
+      lastKnownLng: 0.0,
       updatedAt: DateTime.now(),
     );
 

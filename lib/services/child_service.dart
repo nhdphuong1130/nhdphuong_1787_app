@@ -165,8 +165,8 @@ class ChildService {
   static Future<Map<String, dynamic>?> sendHeartbeat(
     int childId, {
     int battery = 85,
-    double lat = 10.762622,
-    double lng = 106.660172,
+    double lat = 0.0,
+    double lng = 0.0,
     double noiseDb = 45.0,
     double eyeDistanceCm = 35.0,
   }) async {
