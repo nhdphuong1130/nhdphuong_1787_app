@@ -9,9 +9,39 @@ using nhdphuong_1787_api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Cấu hình Port linh hoạt (Hỗ trợ Cloud Render / Heroku / Container)
+var envPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(envPort))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{envPort}");
+}
+
 // 1. Cấu hình PostgreSQL Database Context
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+// Tự động nhận diện DATABASE_URL từ Cloud (Render PostgreSQL, Neon, Supabase...)
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+if (!string.IsNullOrEmpty(databaseUrl) && (databaseUrl.StartsWith("postgres://") || databaseUrl.StartsWith("postgresql://")))
+{
+    try
+    {
+        var uri = new Uri(databaseUrl);
+        var userInfo = uri.UserInfo.Split(':');
+        var user = userInfo[0];
+        var password = userInfo.Length > 1 ? userInfo[1] : "";
+        var host = uri.Host;
+        var dbPort = uri.Port > 0 ? uri.Port : 5432;
+        var database = uri.AbsolutePath.TrimStart('/');
+        connectionString = $"Host={host};Port={dbPort};Database={database};Username={user};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
+    }
+    catch
+    {
+        // Dự phòng giữ nguyên connectionString nếu có lỗi parse URL
+    }
+}
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(connectionString));
 
 // 2. Cấu hình ASP.NET Core Identity
 builder.Services.AddIdentity<User, IdentityRole>(options =>
@@ -112,7 +142,7 @@ using (var scope = app.Services.CreateScope())
                 Email = "admin1787@childguard.local",
                 FullName = "Quản trị viên Hệ thống (Admin)",
                 Role = "Admin",
-                PhoneNumber = "0901787001",
+                PhoneNumber = "0374423251",
                 SecurityStamp = Guid.NewGuid().ToString()
             };
             await userManager.CreateAsync(admin, "Password123@");
@@ -129,7 +159,7 @@ using (var scope = app.Services.CreateScope())
                 Email = "staff1787@childguard.local",
                 FullName = "Kỹ thuật viên Kiểm duyệt (Staff)",
                 Role = "Staff",
-                PhoneNumber = "0901787002",
+                PhoneNumber = "0374423251",
                 SecurityStamp = Guid.NewGuid().ToString()
             };
             await userManager.CreateAsync(staff, "Password123@");
@@ -146,7 +176,7 @@ using (var scope = app.Services.CreateScope())
                 Email = "parent1787@childguard.local",
                 FullName = "Phụ huynh Duy Phương (Parent)",
                 Role = "Customer",
-                PhoneNumber = "0901787187",
+                PhoneNumber = "0374423251",
                 SecurityStamp = Guid.NewGuid().ToString()
             };
             await userManager.CreateAsync(parent, "Password123@");
@@ -162,6 +192,8 @@ using (var scope = app.Services.CreateScope())
                 DeviceName = "Samsung Galaxy Tab A9",
                 DeviceModel = "SM-X110 (Android Emulator)",
                 PairingCode = "178701",
+                ChildUsername = "bebo1787",
+                ChildPassword = "Password123@",
                 BatteryLevel = 82,
                 IsOnline = true,
                 IsLocked = false,
@@ -179,6 +211,8 @@ using (var scope = app.Services.CreateScope())
                 DeviceName = "Redmi Note 13",
                 DeviceModel = "23129RAA4G",
                 PairingCode = "178702",
+                ChildUsername = "bena1787",
+                ChildPassword = "Password123@",
                 BatteryLevel = 95,
                 IsOnline = true,
                 IsLocked = false,

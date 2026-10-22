@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import 'otp_verification_screen.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -60,23 +61,21 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     if (!mounted) return;
 
     if (res['success'] == true) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          icon: const Icon(Icons.check_circle, color: Colors.green, size: 48),
-          title: const Text('Đăng Ký Thành Công!'),
-          content: Text(
-            'Tài khoản phụ huynh "${_usernameController.text}" đã được tạo. Vui lòng đăng nhập để bắt đầu quản lý thiết bị con.',
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(res['message'] ?? 'Đã gửi mã SMS OTP kích hoạt tài khoản!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Chuyển sang màn hình xác thực OTP Đăng ký qua SIMGATE
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => OtpVerificationScreen(
+            username: _usernameController.text.trim(),
+            phoneNumber: _phoneController.text.trim(),
+            isRegistration: true,
           ),
-          actions: [
-            FilledButton(
-              onPressed: () {
-                Navigator.of(ctx).pop();
-                Navigator.of(context).pop(); // Quay về màn hình login
-              },
-              child: const Text('Đăng Nhập Ngay'),
-            ),
-          ],
         ),
       );
     } else {
@@ -121,7 +120,25 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: ActionChip(
+                        avatar: const Icon(Icons.flash_on_rounded, size: 16, color: Color(0xFF4F46E5)),
+                        backgroundColor: const Color(0xFFEEF2FF),
+                        label: const Text('Điền nhanh tài khoản kiểm tra SMS OTP', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF4F46E5))),
+                        onPressed: () {
+                          final randId = DateTime.now().millisecondsSinceEpoch % 10000;
+                          _fullNameController.text = 'Nguyễn Hải Đăng Phương';
+                          _usernameController.text = 'parent_otp$randId';
+                          _emailController.text = 'phuong$randId@gmail.com';
+                          _phoneController.text = '0374423251'; // SĐT SIM thật trên máy
+                          _passwordController.text = 'Password123@';
+                          _confirmPasswordController.text = 'Password123@';
+                          setState(() {});
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
 
                     TextFormField(
                       controller: _fullNameController,

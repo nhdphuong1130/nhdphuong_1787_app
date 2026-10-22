@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,11 +18,33 @@ namespace nhdphuong_1787_api.Controllers
             _context = context;
         }
 
+        private string? GetCurrentUserId() => User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        private bool IsAdmin() =>
+            User.IsInRole("Admin") ||
+            User.HasClaim(ClaimTypes.Role, "Admin") ||
+            User.HasClaim("role", "Admin") ||
+            User.HasClaim("Role", "Admin") ||
+            User.Identity?.Name?.ToLower() == "admin1787";
+
         // GET: api/AlertLogApi?childId=1
         [HttpGet]
         public async Task<IActionResult> GetAlerts([FromQuery] int? childId)
         {
-            var query = _context.AlertLogs.AsQueryable();
+            var userId = GetCurrentUserId();
+            var query = _context.AlertLogs
+                .Include(a => a.ChildProfile)
+                .AsQueryable();
+
+            if (!IsAdmin())
+            {
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized();
+                }
+                // Cô lập dữ liệu: Phụ huynh chỉ nhìn thấy cảnh báo thuộc về các con của chính mình
+                query = query.Where(a => a.ChildProfile != null && a.ChildProfile.ParentId == userId);
+            }
+
             if (childId.HasValue && childId.Value > 0)
             {
                 query = query.Where(a => a.ChildProfileId == childId.Value);

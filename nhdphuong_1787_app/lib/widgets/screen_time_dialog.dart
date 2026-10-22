@@ -156,20 +156,68 @@ class _ScreenTimeDialogState extends State<ScreenTimeDialog> {
                     itemBuilder: (ctx, i) {
                       final item = _schedules[i];
                       return Card(
+                        elevation: 1.5,
                         margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         child: ListTile(
-                          leading: const CircleAvatar(
-                            backgroundColor: Colors.blue,
-                            child: Icon(Icons.access_time, color: Colors.white),
+                          leading: CircleAvatar(
+                            backgroundColor: item.isActive ? const Color(0xFF4F46E5) : Colors.grey[400],
+                            child: const Icon(Icons.access_time_filled, color: Colors.white),
                           ),
-                          title: Text(item.scheduleTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('${item.dayOfWeek} • Từ ${item.allowedStartTime} đến ${item.allowedEndTime}'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.grey),
-                            onPressed: () async {
-                              await ChildService.deleteSchedule(item.id);
-                              _loadSchedules();
-                            },
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item.scheduleTitle,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: item.isActive ? const Color(0xFF0F172A) : Colors.grey[600],
+                                  ),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: item.isActive ? Colors.green[50] : Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  item.isActive ? 'Đang bật' : 'Tắt',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: item.isActive ? Colors.green[800] : Colors.grey[600],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          subtitle: Text(
+                            '${item.dayOfWeek}\n⏰ Khung giờ: ${item.allowedStartTime.substring(0, 5)} - ${item.allowedEndTime.substring(0, 5)} (Tối đa ${item.maxDailyHours}h)',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Transform.scale(
+                                scale: 0.8,
+                                child: Switch(
+                                  value: item.isActive,
+                                  activeThumbColor: const Color(0xFF4F46E5),
+                                  onChanged: (val) async {
+                                    await ChildService.toggleSchedule(item.id);
+                                    _loadSchedules();
+                                  },
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                onPressed: () async {
+                                  await ChildService.deleteSchedule(item.id);
+                                  _loadSchedules();
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       );

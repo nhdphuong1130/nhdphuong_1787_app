@@ -32,7 +32,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _canCheckBiometrics = false;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: '769609857279-nr4htnp61463igfqid2v9mvo986slf8v.apps.googleusercontent.com',
     serverClientId: '769609857279-66sh2d25cuvb205phs5bbcdti5d1nuct.apps.googleusercontent.com',
     scopes: ['email', 'profile'],
   );
@@ -184,6 +183,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _showGoogleFallbackDialog(String errorDetail) {
+    final emailController = TextEditingController(text: 'nhdphuong1130@gmail.com');
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -209,29 +209,18 @@ class _LoginScreenState extends State<LoginScreen> {
               style: TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.blue, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Tài khoản Google liên kết: khi30112005@gmail.com',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.blue),
-                    ),
-                  ),
-                ],
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(
+                labelText: 'Email Google của bạn',
+                prefixIcon: Icon(Icons.email, color: Colors.blue),
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               ),
             ),
             const SizedBox(height: 12),
             const Text(
-              'Bạn có muốn tiếp tục đăng nhập với tài khoản Google này để vào Parent Dashboard không?',
+              'Xác nhận đăng nhập với email này để vào Parent Dashboard:',
               style: TextStyle(fontSize: 13, color: Colors.black87),
             ),
           ],
@@ -244,16 +233,18 @@ class _LoginScreenState extends State<LoginScreen> {
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: const Color(0xFF4285F4)),
             onPressed: () async {
+              final chosenEmail = emailController.text.trim();
+              if (chosenEmail.isEmpty) return;
               Navigator.pop(ctx);
               setState(() => _isGoogleLoading = true);
-              final result = await AuthService.loginWithGoogle('mock_token_khi30112005@gmail.com');
+              final result = await AuthService.loginWithGoogle('mock_token_$chosenEmail');
               if (!mounted) return;
               setState(() => _isGoogleLoading = false);
               if (result['success'] == true) {
                 final role = result['role'] as String? ?? 'Customer';
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Chào mừng Nguyễn Hoàng Duy Phương (khi30112005@gmail.com)!'),
+                  SnackBar(
+                    content: Text('Chào mừng $chosenEmail!'),
                     backgroundColor: Colors.green,
                   ),
                 );

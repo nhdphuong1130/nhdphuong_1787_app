@@ -16,6 +16,8 @@ namespace nhdphuong_1787_api.Models
         public string DeviceName { get; set; } = "Android Phone";
         public string DeviceModel { get; set; } = "Samsung / Emulator";
         public string PairingCode { get; set; } = "178701";
+        public string ChildUsername { get; set; } = "bebo1787";
+        public string ChildPassword { get; set; } = "Password123@";
         public int BatteryLevel { get; set; } = 85;
         public bool IsOnline { get; set; } = true;
         public bool IsLocked { get; set; } = false;
@@ -23,6 +25,11 @@ namespace nhdphuong_1787_api.Models
         // GPS coordinates
         public double LastKnownLat { get; set; } = 10.762622;
         public double LastKnownLng { get; set; } = 106.660172;
+
+        // Real-time sensor metrics
+        public double CurrentNoiseDb { get; set; } = 45.0;
+        public double CurrentEyeDistanceCm { get; set; } = 35.0;
+
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
         // Navigation

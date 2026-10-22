@@ -59,6 +59,9 @@ class TokenService {
     await prefs.remove(_tokenKey);
     await prefs.remove(_userRoleKey);
     await prefs.remove(_userNameKey);
+    await prefs.remove('paired_child_id');
+    await prefs.remove('paired_child_name');
+    await prefs.remove('paired_code');
   }
 
   static Future<bool> isBiometricEnabled() async {

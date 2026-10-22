@@ -9,12 +9,14 @@ class OtpVerificationScreen extends StatefulWidget {
   final String username;
   final String? phoneNumber;
   final String? simulatedOtp;
+  final bool isRegistration;
 
   const OtpVerificationScreen({
     super.key,
     required this.username,
     this.phoneNumber,
     this.simulatedOtp,
+    this.isRegistration = false,
   });
 
   @override
@@ -64,27 +66,12 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     }
   }
 
-  /// Nút giả lập nhận SMS OTP cho Thầy chấm điểm ngay trên Android Emulator
-  void _simulateIncomingSms() {
-    final code = widget.simulatedOtp ?? '123456';
-    setState(() {
-      _otpController.text = code;
-      _statusMessage = 'SmartAuth: Đã điền mã SMS OTP giả lập ($code)';
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('⚡ SmartAuth giả lập nhận SMS: "Ma OTP cua ban la: $code"'),
-        backgroundColor: Colors.blueAccent,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
   /// Gửi lại mã OTP qua SIMGATE
   Future<void> _handleResend() async {
     setState(() => _isResending = true);
-    final res = await AuthService.resendOtp(widget.username);
+    final res = widget.isRegistration
+        ? await AuthService.resendRegisterOtp(widget.username)
+        : await AuthService.resendOtp(widget.username);
     setState(() => _isResending = false);
 
     if (!mounted) return;
@@ -112,7 +99,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     }
 
     setState(() => _isVerifying = true);
-    final res = await AuthService.verifyOtp(widget.username, otp);
+    final res = widget.isRegistration
+        ? await AuthService.verifyRegisterOtp(widget.username, otp)
+        : await AuthService.verifyOtp(widget.username, otp);
     setState(() => _isVerifying = false);
 
     if (!mounted) return;
@@ -122,7 +111,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Đăng nhập thành công với vai trò: $role'),
+          content: Text(widget.isRegistration
+              ? '🎉 Kích hoạt tài khoản thành công! Đang chuyển vào trang quản lý...'
+              : 'Đăng nhập thành công với vai trò: $role'),
           backgroundColor: Colors.green,
         ),
       );
@@ -157,7 +148,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Xác Thực Hai Bước (SMS OTP)'),
+        title: Text(widget.isRegistration ? 'Kích Hoạt Tài Khoản (SMS OTP)' : 'Xác Thực Hai Bước (SMS OTP)'),
       ),
       body: SafeArea(
         child: Center(
@@ -175,14 +166,16 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Xác Thực Danh Tính OTP',
+                    widget.isRegistration ? 'Xác Thực Đăng Ký Tài Khoản' : 'Xác Thực Danh Tính OTP',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     widget.phoneNumber != null && widget.phoneNumber!.isNotEmpty
-                        ? 'Mã OTP đã được gửi qua cổng SIMGATE tới số: ${widget.phoneNumber}'
+                        ? (widget.isRegistration
+                            ? 'Mã OTP kích hoạt tài khoản đã được gửi qua cổng SIMGATE tới số: ${widget.phoneNumber}'
+                            : 'Mã OTP đã được gửi qua cổng SIMGATE tới số: ${widget.phoneNumber}')
                         : 'Mã xác thực đã được gửi cho tài khoản: ${widget.username}',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
@@ -195,6 +188,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                     keyboardType: TextInputType.number,
                     maxLength: 6,
                     textAlign: TextAlign.center,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _handleVerify(),
                     style: const TextStyle(fontSize: 28, letterSpacing: 10, fontWeight: FontWeight.bold),
                     decoration: InputDecoration(
                       hintText: '------',
@@ -227,18 +222,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Nút kiểm thử nhanh cho Thầy trên máy ảo Android Emulator
-                  OutlinedButton.icon(
-                    onPressed: _simulateIncomingSms,
-                    icon: const Icon(Icons.flash_on, color: Colors.amber),
-                    label: const Text('⚡ Giả lập nhận SMS OTP (Cho Thầy test máy ảo)'),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.amber, width: 1.5),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
                   FilledButton.icon(
                     onPressed: _isVerifying ? null : _handleVerify,
                     icon: _isVerifying
@@ -248,7 +231,11 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : const Icon(Icons.check_circle_outline),
-                    label: Text(_isVerifying ? 'Đang xác thực...' : 'Xác Nhận Đăng Nhập'),
+                    label: Text(_isVerifying
+                        ? 'Đang xác thực...'
+                        : (widget.isRegistration
+                            ? 'Xác Nhận Kích Hoạt'
+                            : 'Xác Nhận Đăng Nhập')),
                     style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
                   ),
                   const SizedBox(height: 16),

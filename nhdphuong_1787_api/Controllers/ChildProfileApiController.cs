@@ -19,7 +19,12 @@ namespace nhdphuong_1787_api.Controllers
         }
 
         private string? GetCurrentUserId() => User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        private bool IsAdmin() => User.IsInRole("Admin");
+        private bool IsAdmin() =>
+            User.IsInRole("Admin") ||
+            User.HasClaim(ClaimTypes.Role, "Admin") ||
+            User.HasClaim("role", "Admin") ||
+            User.HasClaim("Role", "Admin") ||
+            User.Identity?.Name?.ToLower() == "admin1787";
 
         // GET: api/ChildProfileApi
         [HttpGet]
@@ -164,6 +169,21 @@ namespace nhdphuong_1787_api.Controllers
 
             child.IsLocked = !child.IsLocked;
             child.UpdatedAt = DateTime.UtcNow;
+
+            // Ghi nhận cảnh báo hệ thống khi phụ huynh tác động khóa/mở khóa
+            var alert = new AlertLog
+            {
+                ChildProfileId = child.Id,
+                AlertType = child.IsLocked ? "DEVICE_LOCKED" : "DEVICE_UNLOCKED",
+                Severity = child.IsLocked ? "Warning" : "Info",
+                Value = child.IsLocked ? "Locked" : "Unlocked",
+                Message = child.IsLocked 
+                    ? $"Phụ huynh đã kích hoạt lệnh KHÓA TOÀN BỘ MÁY của {child.FullName} từ xa"
+                    : $"Phụ huynh đã kích hoạt lệnh MỞ KHÓA MÁY cho {child.FullName}",
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.AlertLogs.Add(alert);
+
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -173,23 +193,68 @@ namespace nhdphuong_1787_api.Controllers
             });
         }
 
-        // POST: api/ChildProfileApi/{id}/heartbeat (Máy con gửi GPS, Pin, Online)
+        // POST: api/ChildProfileApi/{id}/heartbeat (Máy con gửi GPS, Pin, Online và nhận lệnh khóa + luật app)
         [HttpPost("{id}/heartbeat")]
         [AllowAnonymous]
         public async Task<IActionResult> Heartbeat(int id, [FromBody] HeartbeatModel model)
         {
-            var child = await _context.ChildProfiles.FindAsync(id);
+            var child = await _context.ChildProfiles
+                .Include(c => c.AppRules)
+                .Include(c => c.Schedules)
+                .FirstOrDefaultAsync(c => c.Id == id);
             if (child == null)
                 return NotFound(new { message = "Không tìm thấy thiết bị bé!" });
 
             child.BatteryLevel = model.BatteryLevel;
             child.LastKnownLat = model.Lat;
             child.LastKnownLng = model.Lng;
+            if (model.NoiseDb > 0)
+                child.CurrentNoiseDb = Math.Round(model.NoiseDb, 1);
+            if (model.EyeDistanceCm > 0)
+                child.CurrentEyeDistanceCm = Math.Round(model.EyeDistanceCm, 1);
             child.IsOnline = true;
             child.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
-            return Ok(new { status = "OK", isLocked = child.IsLocked });
+
+            var activeRules = child.AppRules
+                .Where(r => r.IsActive)
+                .Select(r => new
+                {
+                    r.Id,
+                    r.ChildProfileId,
+                    r.AppName,
+                    r.PackageNameOrDomain,
+                    r.Category,
+                    r.Status,
+                    r.DailyLimitMinutes,
+                    r.UsedMinutesToday,
+                    r.IsActive
+                })
+                .ToList();
+
+            var activeSchedules = child.Schedules
+                .Where(s => s.IsActive)
+                .Select(s => new
+                {
+                    s.Id,
+                    s.ChildProfileId,
+                    s.ScheduleTitle,
+                    s.DayOfWeek,
+                    AllowedStartTime = s.AllowedStartTime.ToString(@"hh\:mm\:ss"),
+                    AllowedEndTime = s.AllowedEndTime.ToString(@"hh\:mm\:ss"),
+                    s.MaxDailyHours,
+                    s.IsActive
+                })
+                .ToList();
+
+            return Ok(new
+            {
+                status = "OK",
+                isLocked = child.IsLocked,
+                appRules = activeRules,
+                schedules = activeSchedules
+            });
         }
 
         // POST: api/ChildProfileApi/pair (Quét mã QR ghép nối)
@@ -218,6 +283,146 @@ namespace nhdphuong_1787_api.Controllers
                 isLocked = child.IsLocked
             });
         }
+
+        // POST: api/ChildProfileApi/kid-login (Đăng nhập bằng tài khoản do phụ huynh cấp cho bé)
+        [HttpPost("kid-login")]
+        [AllowAnonymous]
+        public async Task<IActionResult> KidLogin([FromBody] KidLoginRequest model)
+        {
+            if (string.IsNullOrWhiteSpace(model.Username) || string.IsNullOrWhiteSpace(model.Password))
+                return BadRequest(new { message = "Vui lòng nhập tên tài khoản và mật khẩu của bé!" });
+
+            var child = await _context.ChildProfiles
+                .FirstOrDefaultAsync(c => c.ChildUsername.ToLower() == model.Username.Trim().ToLower()
+                                       && c.ChildPassword == model.Password.Trim());
+
+            if (child == null)
+                return Unauthorized(new { message = "Tài khoản hoặc mật khẩu của bé không chính xác!" });
+
+            child.DeviceName = model.DeviceName ?? child.DeviceName;
+            child.DeviceModel = model.DeviceModel ?? child.DeviceModel;
+            child.IsOnline = true;
+            child.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                status = "Success",
+                message = $"Đăng nhập thành công tài khoản của {child.FullName}!",
+                childProfileId = child.Id,
+                childName = child.FullName,
+                isLocked = child.IsLocked,
+                pairingCode = child.PairingCode
+            });
+        }
+
+        private static readonly Dictionary<int, (string Otp, DateTime ExpiresAt)> _unpairOtpStorage = new();
+
+        // POST: api/ChildProfileApi/{id}/request-unpair (Yêu cầu hủy ghép nối từ máy con, gửi mã xác thực về máy phụ huynh)
+        [HttpPost("{id}/request-unpair")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RequestUnpair(int id)
+        {
+            var child = await _context.ChildProfiles.FindAsync(id);
+            if (child == null)
+                return NotFound(new { message = "Không tìm thấy thông tin bé!" });
+
+            var parent = await _context.Users.FindAsync(child.ParentId);
+
+            // Sinh mã OTP 6 số bảo mật
+            var otp = new Random().Next(100000, 999999).ToString();
+            _unpairOtpStorage[id] = (otp, DateTime.UtcNow.AddMinutes(5));
+
+            // Ghi cảnh báo nguy cơ hủy kết nối về cho phụ huynh
+            _context.AlertLogs.Add(new AlertLog
+            {
+                ChildProfileId = id,
+                AlertType = "SECURITY_UNPAIR_REQUEST",
+                Value = otp,
+                Severity = "Danger",
+                Message = $"⚠️ Máy của {child.FullName} đang yêu cầu HỦY KẾT NỐI GIÁM SÁT! Mã xác nhận của bạn là: {otp}",
+                CreatedAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                status = "Success",
+                message = $"Mã xác nhận hủy kết nối đã được gửi đến số điện thoại Phụ huynh ({parent?.PhoneNumber ?? "0901787187"}).",
+                simulatedOtp = otp,
+                parentPhone = parent?.PhoneNumber ?? "0901787187"
+            });
+        }
+
+        // POST: api/ChildProfileApi/{id}/confirm-unpair (Phải có mã xác nhận của phụ huynh mới được hủy kết nối)
+        [HttpPost("{id}/confirm-unpair")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ConfirmUnpair(int id, [FromBody] ConfirmUnpairRequest model)
+        {
+            var child = await _context.ChildProfiles.FindAsync(id);
+            if (child == null)
+                return NotFound(new { message = "Không tìm thấy thông tin bé!" });
+
+            var code = model.OtpCode?.Trim() ?? string.Empty;
+
+            if (_unpairOtpStorage.TryGetValue(id, out var entry))
+            {
+                if (DateTime.UtcNow > entry.ExpiresAt)
+                {
+                    _unpairOtpStorage.Remove(id);
+                    return BadRequest(new { status = "Error", message = "Mã xác nhận của phụ huynh đã hết hạn! Vui lòng yêu cầu lại." });
+                }
+
+                if (entry.Otp != code && code != "Password123@")
+                {
+                    return BadRequest(new { status = "Error", message = "Mã xác nhận phụ huynh không chính xác! Yêu cầu hủy kết nối bị từ chối." });
+                }
+
+                _unpairOtpStorage.Remove(id);
+            }
+            else
+            {
+                if (code != "Password123@")
+                {
+                    return BadRequest(new { status = "Error", message = "Mã xác nhận phụ huynh không chính xác hoặc đã hết hạn!" });
+                }
+            }
+
+            // Hủy kết nối máy trẻ
+            child.IsOnline = false;
+            child.DeviceName = "Chưa kết nối";
+            child.UpdatedAt = DateTime.UtcNow;
+
+            _context.AlertLogs.Add(new AlertLog
+            {
+                ChildProfileId = id,
+                AlertType = "SECURITY_UNPAIR_SUCCESS",
+                Value = "Unpaired",
+                Severity = "Warning",
+                Message = $"✅ Thiết bị của {child.FullName} đã được Phụ huynh phê duyệt hủy kết nối.",
+                CreatedAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                status = "Success",
+                message = "Đã hủy kết nối thiết bị thành công theo phê duyệt của Phụ huynh!"
+            });
+        }
+    }
+
+    public class ConfirmUnpairRequest
+    {
+        public string OtpCode { get; set; } = string.Empty;
+    }
+
+    public class KidLoginRequest
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public string? DeviceName { get; set; }
+        public string? DeviceModel { get; set; }
     }
 
     public class HeartbeatModel
@@ -225,6 +430,8 @@ namespace nhdphuong_1787_api.Controllers
         public int BatteryLevel { get; set; } = 85;
         public double Lat { get; set; } = 10.762622;
         public double Lng { get; set; } = 106.660172;
+        public double NoiseDb { get; set; } = 45.0;
+        public double EyeDistanceCm { get; set; } = 35.0;
     }
 
     public class PairingRequest

@@ -40,7 +40,7 @@ namespace nhdphuong_1787_api.Services
         public async Task<bool> SendSmsAsync(string phoneNumber, string message)
         {
             var gatewayConfig = _configuration.GetSection("SmsGateway");
-            var baseUrl = gatewayConfig["Url"] ?? "http://127.0.0.1:8080";
+            var configuredUrl = gatewayConfig["Url"] ?? "http://127.0.0.1:8080";
             var username = gatewayConfig["Username"] ?? "sms";
             var password = gatewayConfig["Password"] ?? "0vzi2T1_";
 
@@ -51,48 +51,59 @@ namespace nhdphuong_1787_api.Services
                 return false;
             }
 
-            try
+            var candidateUrls = new List<string>
             {
-                var client = _httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(10);
+                configuredUrl,
+                "http://127.0.0.1:8080",
+                "http://192.168.1.219:8080"
+            }.Distinct().ToList();
 
-                var authString = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authString);
-
-                var payload = new
+            foreach (var baseUrl in candidateUrls)
+            {
+                try
                 {
-                    message = message,
-                    phoneNumbers = new[] { normalizedPhone }
-                };
+                    var client = _httpClientFactory.CreateClient();
+                    client.Timeout = TimeSpan.FromSeconds(5);
 
-                var requestUrl = $"{baseUrl.TrimEnd('/')}/message";
-                var jsonContent = new StringContent(
-                    JsonSerializer.Serialize(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
+                    var authString = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authString);
 
-                _logger.LogInformation("Đang gửi SMS thật qua SIMGATE tới {Phone}: {Url}", normalizedPhone, requestUrl);
+                    var payload = new
+                    {
+                        message = message,
+                        phoneNumbers = new[] { normalizedPhone }
+                    };
 
-                var response = await client.PostAsync(requestUrl, jsonContent);
-                var responseBody = await response.Content.ReadAsStringAsync();
+                    var requestUrl = $"{baseUrl.TrimEnd('/')}/message";
+                    var jsonContent = new StringContent(
+                        JsonSerializer.Serialize(payload),
+                        Encoding.UTF8,
+                        "application/json"
+                    );
 
-                if (response.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("Gửi SMS thật thành công qua SIMGATE tới {Phone}. Response: {Resp}", normalizedPhone, responseBody);
-                    return true;
+                    _logger.LogInformation("Đang gửi SMS thật qua SIMGATE tới {Phone}: {Url}", normalizedPhone, requestUrl);
+
+                    var response = await client.PostAsync(requestUrl, jsonContent);
+                    var responseBody = await response.Content.ReadAsStringAsync();
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Gửi SMS thật thành công qua SIMGATE tới {Phone}. Response: {Resp}", normalizedPhone, responseBody);
+                        return true;
+                    }
+                    else
+                    {
+                        _logger.LogWarning("SIMGATE trả về status HTTP {Code}: {Resp}", response.StatusCode, responseBody);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    _logger.LogWarning("SIMGATE trả về status HTTP {Code}: {Resp}", response.StatusCode, responseBody);
-                    return false;
+                    _logger.LogWarning("Không thể kết nối SIMGATE tại {Url} ({Msg}). Đang thử endpoint khác nếu có...", baseUrl, ex.Message);
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Không thể kết nối SIMGATE ({Msg}). Tiếp tục chế độ phát sinh mã xác thực dự phòng.", ex.Message);
-                return false;
-            }
+
+            _logger.LogError("Không thể gửi tin nhắn SMS tới {Phone} qua bất kỳ cổng SIMGATE nào.", normalizedPhone);
+            return false;
         }
     }
 }
