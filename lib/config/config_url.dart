@@ -8,7 +8,7 @@ class ConfigUrl {
     if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
       return _overrideBaseUrl!.endsWith('/') ? _overrideBaseUrl! : '$_overrideBaseUrl/';
     }
-    final envUrl = dotenv.env['BASE_URL'] ?? 'https://knowing-clicks-ice-financing.trycloudflare.com/api/';
+    final envUrl = dotenv.env['BASE_URL'] ?? 'http://10.12.24.140:5000/api/';
     return envUrl.endsWith('/') ? envUrl : '$envUrl/';
   }
 
