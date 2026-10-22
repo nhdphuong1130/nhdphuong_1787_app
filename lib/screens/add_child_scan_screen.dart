@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../models/child_profile.dart';
 import '../services/child_service.dart';
 
@@ -12,24 +14,34 @@ class AddChildScanScreen extends StatefulWidget {
   State<AddChildScanScreen> createState() => _AddChildScanScreenState();
 }
 
-class _AddChildScanScreenState extends State<AddChildScanScreen> {
-  int _currentStep = 0; // 0: Quét mã QR, 1: Nhập thông tin bé
-  String _scannedCode = '';
-  final MobileScannerController _scannerController = MobileScannerController();
+class _AddChildScanScreenState extends State<AddChildScanScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
 
-  // Controllers cho form nhập thông tin bé ở Bước 2
+  // Controllers cho form tạo tài khoản trực tiếp
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _ageCtrl = TextEditingController(text: '8');
-  final TextEditingController _deviceCtrl = TextEditingController(text: 'Android Phone (Máy Thật)');
+  final TextEditingController _deviceCtrl = TextEditingController(text: 'Điện thoại của bé');
   final TextEditingController _usernameCtrl = TextEditingController();
   final TextEditingController _passwordCtrl = TextEditingController(text: 'Password123@');
 
+  // Scanner state
+  String _scannedCode = '';
+  final MobileScannerController _scannerController = MobileScannerController();
+  bool _hasScanned = false;
+
   String _avatar = 'boy';
   bool _isLoading = false;
-  bool _hasScanned = false;
+  bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _scannerController.dispose();
     _nameCtrl.dispose();
     _ageCtrl.dispose();
@@ -46,12 +58,12 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
 
     setState(() {
       _scannedCode = cleanCode;
-      _currentStep = 1; // Chuyển sang Bước 2: Nhập thông tin
+      _tabController.animateTo(0); // Chuyển sang Tab Tạo Tài Khoản & áp mã đã quét
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('📷 Đã quét thành công mã máy con: $cleanCode'),
+        content: Text('📷 Đã nhận diện mã máy con: $cleanCode! Hãy kiểm tra thông tin tài khoản bên dưới.'),
         backgroundColor: Colors.green,
       ),
     );
@@ -68,7 +80,7 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'Nếu máy ảo không có Camera, bạn có thể gõ mã 6 số hiển thị trên máy con:',
+              'Nếu máy con hiển thị mã số 6 chữ số, bạn có thể gõ vào đây để liên kết:',
               style: TextStyle(fontSize: 13, color: Colors.grey),
             ),
             const SizedBox(height: 12),
@@ -117,18 +129,21 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
     final fullName = _nameCtrl.text.trim();
     if (fullName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng nhập tên của bé!'), backgroundColor: Colors.orange),
+        const SnackBar(content: Text('Vui lòng nhập họ và tên của bé!'), backgroundColor: Colors.orange),
       );
       return;
     }
 
     setState(() => _isLoading = true);
 
-    // Tự sinh username nếu để trống
+    // Tự sinh username nếu phụ huynh để trống
     String username = _usernameCtrl.text.trim();
     if (username.isEmpty) {
-      username = 'be${DateTime.now().millisecondsSinceEpoch % 10000}';
+      final clean = fullName.toLowerCase().replaceAll(' ', '').replaceAll('bé', 'be');
+      username = clean.isNotEmpty ? '${clean}1787' : 'be${DateTime.now().millisecondsSinceEpoch % 10000}';
     }
+
+    final password = _passwordCtrl.text.trim().isNotEmpty ? _passwordCtrl.text.trim() : 'Password123@';
 
     final newChild = ChildProfile(
       id: 0,
@@ -136,11 +151,11 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
       fullName: fullName,
       age: int.tryParse(_ageCtrl.text) ?? 8,
       avatarUrl: _avatar,
-      deviceName: _deviceCtrl.text.trim().isNotEmpty ? _deviceCtrl.text.trim() : 'Android Phone',
+      deviceName: _deviceCtrl.text.trim().isNotEmpty ? _deviceCtrl.text.trim() : 'Điện thoại của bé',
       deviceModel: 'Android Device',
-      pairingCode: _scannedCode.isNotEmpty ? _scannedCode : '178701',
+      pairingCode: _scannedCode.isNotEmpty ? _scannedCode : '',
       childUsername: username,
-      childPassword: _passwordCtrl.text.trim().isNotEmpty ? _passwordCtrl.text.trim() : 'Password123@',
+      childPassword: password,
       batteryLevel: 85,
       isOnline: true,
       isLocked: false,
@@ -149,48 +164,354 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
       updatedAt: DateTime.now(),
     );
 
-    final success = await ChildService.createChild(newChild);
+    final createdChild = await ChildService.createChildWithResult(newChild);
     setState(() => _isLoading = false);
 
     if (!mounted) return;
 
-    if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('🎉 Đã thêm hồ sơ và liên kết máy thành công với $fullName!'),
-          backgroundColor: Colors.green,
-        ),
-      );
+    if (createdChild != null) {
       widget.onSaved?.call();
-      Navigator.of(context).pop();
+      _showSuccessDialog(createdChild);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ Không thể thêm hồ sơ bé! Vui lòng thử lại.'), backgroundColor: Colors.red),
+        const SnackBar(content: Text('❌ Không thể tạo tài khoản bé! Vui lòng thử lại.'), backgroundColor: Colors.red),
       );
     }
+  }
+
+  void _showSuccessDialog(ChildProfile child) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green, size: 28),
+            SizedBox(width: 10),
+            Expanded(child: Text('Tạo Tài Khoản Thành Công!', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Đã cấp tài khoản quản lý và bảo vệ cho bé ${child.fullName}:',
+                style: const TextStyle(fontSize: 13, color: Colors.black87),
+              ),
+              const SizedBox(height: 14),
+
+              // Thẻ thông tin đăng nhập
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.indigo.shade50,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.indigo.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.account_circle, size: 18, color: Colors.indigo),
+                        const SizedBox(width: 6),
+                        const Text('Tên đăng nhập: ', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                        SelectableText(
+                          child.childUsername,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.indigo),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.lock, size: 18, color: Colors.indigo),
+                        const SizedBox(width: 6),
+                        const Text('Mật khẩu: ', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                        SelectableText(
+                          child.childPassword,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.indigo),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.pin, size: 18, color: Colors.indigo),
+                        const SizedBox(width: 6),
+                        const Text('Mã ghép nối 6 số: ', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                        SelectableText(
+                          child.pairingCode,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.deepPurple, letterSpacing: 2),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Mã QR cho máy con quét vào
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: QrImageView(
+                  data: 'CHILDGUARD_PAIR:${child.pairingCode}',
+                  version: QrVersions.auto,
+                  size: 150.0,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Bé chỉ cần mở App trên máy con, nhập Tên đăng nhập & Mật khẩu ở trên hoặc quét mã QR này.',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              final info = 'Tài khoản ChildGuard của bé ${child.fullName}:\n- Tên đăng nhập: ${child.childUsername}\n- Mật khẩu: ${child.childPassword}\n- Mã ghép nối: ${child.pairingCode}';
+              Clipboard.setData(ClipboardData(text: info));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('📋 Đã sao chép thông tin tài khoản bé vào bộ nhớ tạm!'), backgroundColor: Colors.indigo),
+              );
+            },
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Sao Chép'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.of(context).pop();
+            },
+            child: const Text('Hoàn Tất'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_currentStep == 0 ? 'Bước 1: Quét Mã Máy Con' : 'Bước 2: Nhập Thông Tin Bé'),
-        backgroundColor: Colors.deepPurple,
+        title: const Text('Cấp Tài Khoản Cho Con', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: const Color(0xFF3730A3),
         foregroundColor: Colors.white,
-        actions: [
-          if (_currentStep == 0)
-            IconButton(
-              icon: const Icon(Icons.edit_note),
-              tooltip: 'Nhập mã số thủ công (Test)',
-              onPressed: _showManualCodeDialog,
-            ),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.amberAccent,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(icon: Icon(Icons.person_add_alt_1_rounded), text: 'Tạo Tài Khoản Bé'),
+            Tab(icon: Icon(Icons.qr_code_scanner_rounded), text: 'Quét QR Máy Con'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildFormStep(),
+          _buildScannerStep(),
         ],
       ),
-      body: _currentStep == 0 ? _buildScannerStep() : _buildFormStep(),
     );
   }
 
-  /// BƯỚC 1: BẬT CAMERA QUÉT MÃ QR TỪ MÁY CON
+  /// TAB 1: FORM TẠO TÀI KHOẢN TRỰC TIẾP CHO BÉ
+  Widget _buildFormStep() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_scannedCode.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green.shade300),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Đã liên kết mã thiết bị con: $_scannedCode',
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                    onPressed: () => setState(() => _scannedCode = ''),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Chọn hình đại diện
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('👦 Bé Trai'),
+                selected: _avatar == 'boy',
+                onSelected: (s) => setState(() => _avatar = 'boy'),
+              ),
+              const SizedBox(width: 16),
+              ChoiceChip(
+                label: const Text('👧 Bé Gái'),
+                selected: _avatar == 'girl',
+                onSelected: (s) => setState(() => _avatar = 'girl'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: _nameCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Họ và tên của bé *',
+              hintText: 'VD: Bé Bo, Bé Bông, Nguyễn Văn An...',
+              prefixIcon: Icon(Icons.person),
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (val) {
+              if (_usernameCtrl.text.isEmpty || _usernameCtrl.text.startsWith('be')) {
+                final normalized = val.toLowerCase().replaceAll(' ', '').replaceAll('bé', 'be');
+                _usernameCtrl.text = normalized.isNotEmpty ? '${normalized}1787' : '';
+              }
+            },
+          ),
+          const SizedBox(height: 14),
+
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _ageCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Tuổi của bé',
+                    prefixIcon: Icon(Icons.cake),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: _deviceCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Tên thiết bị con',
+                    prefixIcon: Icon(Icons.phone_android),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          // Khung thiết lập tài khoản cấp cho con
+          Card(
+            elevation: 0,
+            color: const Color(0xFFF5F3FF),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFFDDD6FE)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.badge_rounded, color: Color(0xFF6D28D9), size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Cấp Tài Khoản Cho Bé Đăng Nhập:',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF6D28D9)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Phụ huynh thiết lập Tên đăng nhập & Mật khẩu này để bé đăng nhập trên điện thoại của mình.',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _usernameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Tên đăng nhập cấp cho bé *',
+                      hintText: 'VD: bebo1787, bebong1787...',
+                      prefixIcon: Icon(Icons.account_circle, color: Color(0xFF6D28D9)),
+                      border: OutlineInputBorder(),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _passwordCtrl,
+                    obscureText: _obscurePassword,
+                    decoration: InputDecoration(
+                      labelText: 'Mật khẩu cấp cho bé *',
+                      prefixIcon: const Icon(Icons.lock, color: Color(0xFF6D28D9)),
+                      border: const OutlineInputBorder(),
+                      filled: true,
+                      fillColor: Colors.white,
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, size: 20),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 22),
+
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF3730A3),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            onPressed: _isLoading ? null : _saveChildProfile,
+            icon: _isLoading
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.how_to_reg_rounded),
+            label: const Text('TẠO TÀI KHOẢN CHO BÉ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// TAB 2: BẬT CAMERA QUÉT MÃ QR NẾU MÁY CON CÓ SẴN
   Widget _buildScannerStep() {
     return Stack(
       children: [
@@ -241,7 +562,7 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Sau khi quét xong mã thiết bị, bạn sẽ nhập tên và thông tin của bé.',
+                  'Sau khi quét xong mã thiết bị, hệ thống sẽ tự động liên kết máy.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white70, fontSize: 11),
                 ),
@@ -266,7 +587,7 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
                 ),
                 onPressed: _showManualCodeDialog,
                 icon: const Icon(Icons.keyboard, size: 18),
-                label: const Text('Không quét được? Nhập mã 6 số thủ công'),
+                label: const Text('Nhập mã 6 số thủ công (Nếu máy con hiển thị số)'),
               ),
               const SizedBox(height: 12),
               Row(
@@ -295,187 +616,6 @@ class _AddChildScanScreenState extends State<AddChildScanScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  /// BƯỚC 2: NHẬP THÔNG TIN CỦA BÉ SAU KHI ĐÃ QUÉT MÃ
-  Widget _buildFormStep() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Banner thông báo đã quét mã thành công
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.green[50],
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.green[300]!),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.green, size: 28),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Đã liên kết mã máy con thành công!',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13),
-                      ),
-                      Text(
-                        'Mã thiết bị: $_scannedCode',
-                        style: TextStyle(fontSize: 12, color: Colors.green[900]),
-                      ),
-                    ],
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => setState(() {
-                    _hasScanned = false;
-                    _currentStep = 0;
-                  }),
-                  child: const Text('Quét lại', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Chọn hình đại diện
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ChoiceChip(
-                label: const Text('👦 Bé Trai'),
-                selected: _avatar == 'boy',
-                onSelected: (s) => setState(() => _avatar = 'boy'),
-              ),
-              const SizedBox(width: 16),
-              ChoiceChip(
-                label: const Text('👧 Bé Gái'),
-                selected: _avatar == 'girl',
-                onSelected: (s) => setState(() => _avatar = 'girl'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-
-          TextField(
-            controller: _nameCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Họ và tên của bé *',
-              hintText: 'VD: Bé Bông, Bé Tin...',
-              prefixIcon: Icon(Icons.person),
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (val) {
-              if (_usernameCtrl.text.isEmpty || _usernameCtrl.text.startsWith('be')) {
-                final normalized = val.toLowerCase().replaceAll(' ', '');
-                _usernameCtrl.text = normalized.isNotEmpty ? '${normalized}1787' : '';
-              }
-            },
-          ),
-          const SizedBox(height: 14),
-
-          Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: TextField(
-                  controller: _ageCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Tuổi của bé',
-                    prefixIcon: Icon(Icons.cake),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  controller: _deviceCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Tên thiết bị con',
-                    prefixIcon: Icon(Icons.phone_android),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-
-          // Khung thiết lập tài khoản cấp cho con
-          Card(
-            color: Colors.deepPurple[50],
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.badge, color: Colors.deepPurple, size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        'Cấp Tài Khoản Cho Bé Đăng Nhập:',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.deepPurple),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Bé có thể dùng tài khoản này để đăng nhập trực tiếp trên điện thoại con.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _usernameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Tên đăng nhập của bé',
-                      hintText: 'bebong1787',
-                      prefixIcon: Icon(Icons.account_circle),
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _passwordCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Mật khẩu cấp cho bé',
-                      prefixIcon: Icon(Icons.lock),
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.deepPurple,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-            onPressed: _isLoading ? null : _saveChildProfile,
-            icon: _isLoading
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.save),
-            label: const Text('LƯU & KẾT NỐI HỒ SƠ BÉ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          ),
-        ],
-      ),
     );
   }
 }

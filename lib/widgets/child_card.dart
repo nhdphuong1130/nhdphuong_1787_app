@@ -165,6 +165,19 @@ class ChildCard extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (child.childUsername.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            const Icon(Icons.account_circle_outlined, size: 13, color: Color(0xFF4F46E5)),
+                            const SizedBox(width: 4),
+                            Text(
+                              'TK: ${child.childUsername}',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF4F46E5)),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),

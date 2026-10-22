@@ -207,7 +207,7 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               onPressed: _showAddChildDialog,
               icon: const Icon(Icons.person_add_rounded, size: 20),
-              label: const Text('Thêm Bé', style: TextStyle(fontWeight: FontWeight.bold)),
+              label: const Text('Tạo Tài Khoản Bé', style: TextStyle(fontWeight: FontWeight.bold)),
             )
           : null,
     );

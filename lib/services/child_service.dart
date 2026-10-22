@@ -33,6 +33,21 @@ class ChildService {
     return response.statusCode == 200 || response.statusCode == 201;
   }
 
+  static Future<ChildProfile?> createChildWithResult(ChildProfile child) async {
+    final response = await ApiClient.post(
+      ConfigUrl.childProfiles,
+      body: child.toJson(),
+    );
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      try {
+        return ChildProfile.fromJson(jsonDecode(response.body));
+      } catch (_) {
+        return child;
+      }
+    }
+    return null;
+  }
+
   static Future<bool> updateChild(int id, ChildProfile child) async {
     final response = await ApiClient.put(
       ConfigUrl.childProfile(id),
