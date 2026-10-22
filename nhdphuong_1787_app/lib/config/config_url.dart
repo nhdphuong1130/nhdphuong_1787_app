@@ -1,14 +1,22 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ConfigUrl {
+  static const String defaultTunnelUrl = 'https://knowing-clicks-ice-financing.trycloudflare.com/api/';
   static String? _overrideBaseUrl;
 
   static String get baseUrl {
     if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
       return _overrideBaseUrl!.endsWith('/') ? _overrideBaseUrl! : '$_overrideBaseUrl/';
     }
-    final envUrl = dotenv.env['BASE_URL'] ?? 'http://10.12.24.140:5000/api/';
+    String? envUrl;
+    try {
+      if (dotenv.isInitialized) {
+        envUrl = dotenv.env['BASE_URL'];
+      }
+    } catch (_) {}
+    envUrl ??= defaultTunnelUrl;
     return envUrl.endsWith('/') ? envUrl : '$envUrl/';
   }
 
@@ -30,6 +38,23 @@ class ConfigUrl {
     final prefs = await SharedPreferences.getInstance();
     _overrideBaseUrl = null;
     await prefs.remove('api_base_url');
+  }
+
+  /// Kiểm tra xem địa chỉ API hiện tại có phản hồi không
+  static Future<bool> testConnection() async {
+    try {
+      final res = await http.get(Uri.parse('${baseUrl.replaceAll('/api/', '')}/index.html')).timeout(
+        const Duration(seconds: 5),
+      );
+      return res.statusCode == 200 || res.statusCode == 301 || res.statusCode == 302;
+    } catch (_) {
+      try {
+        final res2 = await http.get(Uri.parse(login)).timeout(const Duration(seconds: 5));
+        return res2.statusCode != 0;
+      } catch (_) {
+        return false;
+      }
+    }
   }
 
   // Auth endpoints

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("nhdphuong_1787_api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bfabbf1bccb47a3b3bca1294b2d4c6a0b154f62b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+08f48592b7c9619b98bc710fdd0475d5651776aa")]
 [assembly: System.Reflection.AssemblyProductAttribute("nhdphuong_1787_api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("nhdphuong_1787_api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
