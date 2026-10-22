@@ -22,6 +22,7 @@ class EyeDistanceService {
   OnDistanceUpdate? onDistanceUpdate;
 
   bool get isCameraReady => _cameraController != null && _cameraController!.value.isInitialized;
+  CameraController? get cameraController => _cameraController;
 
   Future<bool> initialize({OnDistanceUpdate? onUpdate}) async {
     onDistanceUpdate = onUpdate;
@@ -46,7 +47,7 @@ class EyeDistanceService {
 
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.medium,
+        ResolutionPreset.low,
         enableAudio: false,
         imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
       );
@@ -107,6 +108,7 @@ class EyeDistanceService {
           }
         }
 
+        debugPrint('[EyeDistanceService] Face detected! distanceCm: $distanceCm cm (isTooClose: $_isCurrentlyTooClose)');
         onDistanceUpdate?.call(distanceCm, _isCurrentlyTooClose);
       } else {
         // Nếu không còn khuôn mặt ở gần (bé buông máy hoặc đưa máy ra xa ngoài góc nhìn)

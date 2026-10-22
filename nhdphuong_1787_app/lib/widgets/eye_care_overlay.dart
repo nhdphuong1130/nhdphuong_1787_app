@@ -138,9 +138,9 @@ class _EyeCareOverlayState extends State<EyeCareOverlay> {
               ),
               const SizedBox(height: 20),
 
-              // Hướng dẫn hành động & Cơ chế tự động tắt
+              // Hướng dẫn hành động & Cơ chế tự động tắt bằng Cảm biến Camera AI
               Container(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(14),
@@ -151,71 +151,23 @@ class _EyeCareOverlayState extends State<EyeCareOverlay> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(isSafe ? Icons.auto_awesome : Icons.phone_android, color: isSafe ? Colors.greenAccent : Colors.amberAccent, size: 18),
+                        Icon(isSafe ? Icons.auto_awesome : Icons.phone_android, color: isSafe ? Colors.greenAccent : Colors.amberAccent, size: 20),
                         const SizedBox(width: 8),
                         Text(
                           isSafe ? '🎉 Đang tự động mở lại màn hình...' : '👉 Hãy đưa điện thoại ra xa ít nhất 30cm',
                           style: TextStyle(
                             color: isSafe ? Colors.greenAccent : Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontSize: 13,
+                            fontSize: 14,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     const Text(
-                      'Cơ chế AI Eye-Care bảo vệ mắt: Màn hình này sẽ TỰ ĐỘNG BIẾN MẤT ngay khi điện thoại cách mắt trên 30cm mà không cần chạm nút nào.',
+                      'Cảm biến Camera AI phát hiện trực tiếp từ mắt của bạn: Màn hình này sẽ TỰ ĐỘNG BIẾN MẤT ngay khi bạn đưa điện thoại ra xa an toàn (trên 30cm) mà không cần chạm vào bất kỳ nút nào.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 11, height: 1.4),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Thanh điều chỉnh mô phỏng cự ly mắt để kiểm tra tính năng tự động tắt
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white12),
-                ),
-                child: Column(
-                  children: [
-                    const Text(
-                      '📱 Thử nghiệm đưa máy ra xa / lại gần mắt:',
-                      style: TextStyle(color: Colors.white60, fontSize: 11),
-                    ),
-                    Slider(
-                      value: _currentCm,
-                      min: 10.0,
-                      max: 45.0,
-                      divisions: 35,
-                      activeColor: isSafe ? Colors.greenAccent : Colors.redAccent,
-                      inactiveColor: Colors.white24,
-                      onChanged: (val) {
-                        setState(() {
-                          _currentCm = val;
-                        });
-                        widget.onDistanceChanged?.call(val);
-                        _checkAutoDismiss();
-                      },
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        ActionChip(
-                          avatar: const Icon(Icons.arrow_forward_rounded, size: 14, color: Colors.green),
-                          label: const Text('Đưa máy ra xa (35cm) -> Tự tắt', style: TextStyle(fontSize: 11)),
-                          onPressed: () {
-                            setState(() => _currentCm = 35.0);
-                            widget.onDistanceChanged?.call(35.0);
-                            _checkAutoDismiss();
-                          },
-                        ),
-                      ],
+                      style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
                     ),
                   ],
                 ),
