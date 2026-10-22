@@ -1,5 +1,10 @@
 import 'dart:async';
+import 'package:battery_plus/battery_plus.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:noise_meter/noise_meter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_log.dart';
@@ -7,6 +12,7 @@ import '../models/app_rule.dart';
 import '../models/screen_time_schedule.dart';
 import '../services/auth_service.dart';
 import '../services/child_service.dart';
+import '../services/eye_distance_service.dart';
 import '../widgets/eye_care_overlay.dart';
 import 'login_screen.dart';
 
@@ -32,34 +38,137 @@ class KidModeSimulatorScreen extends StatefulWidget {
 }
 
 class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
-  // Cự ly mắt thời gian thực
+  // Cự ly mắt thời gian thực (được đo liên tục bởi EyeDistanceService từ Camera trước)
   double _distanceCm = 35.0;
   String _currentDistance = '35 cm';
   bool _isEyeWarningVisible = false;
+  EyeDistanceService? _eyeDistanceService;
 
-  // Trạng thái khóa từ xa và pin
-  bool _isLockedByParent = false;
-  final int _battery = 85;
+  // Cảm biến âm thanh thời gian thực (được đo liên tục bởi NoiseMeter từ Micro thật)
   double _currentNoiseDb = 45.0;
-  final double _lat = 10.762622;
-  final double _lng = 106.660172;
+  NoiseMeter? _noiseMeter;
+  StreamSubscription<NoiseReading>? _noiseSub;
+  DateTime? _lastNoiseAlertSent;
+
+  // Trạng thái pin, định vị GPS thật từ thiết bị
+  int _battery = 85;
+  double _lat = 10.762622;
+  double _lng = 106.660172;
+  bool _isLockedByParent = false;
 
   // Mã ghép nối của máy con xuất trình cho phụ huynh
   String _pairingCode = '178701';
 
   Timer? _syncTimer;
+  Timer? _sensorPollTimer;
   bool _isSyncing = false;
   List<AppRule> _appRules = [];
   List<ScreenTimeSchedule> _schedules = [];
-  bool _simulateCurfewActive = false;
+  final bool _simulateCurfewActive = false;
   final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _loadInitialData();
+    _startRealSensors();
     // Đồng bộ trạng thái khóa máy và đẩy telemetry ngầm lên Server mỗi 2.5 giây
     _syncTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) => _syncDeviceStatus());
+  }
+
+  Future<void> _startRealSensors() async {
+    // 1. Yêu cầu cấp quyền Micro, Camera và Định vị
+    try {
+      await [
+        Permission.microphone,
+        Permission.camera,
+        Permission.location,
+      ].request();
+    } catch (_) {}
+
+    // 2. Kích hoạt Cảm biến Âm thanh thật (Microphone qua NoiseMeter)
+    try {
+      _noiseMeter = NoiseMeter();
+      _noiseSub = _noiseMeter?.noise.listen(
+        (NoiseReading reading) {
+          if (!mounted) return;
+          final db = reading.meanDecibel;
+          if (db.isFinite && !db.isNaN && db > 0) {
+            final clamped = db.clamp(25.0, 115.0);
+            setState(() {
+              _currentNoiseDb = (clamped * 10).round() / 10.0;
+            });
+            // Nếu âm thanh quá ồn (> 80 dB), tự động gửi cảnh báo nguy hiểm lên server cho PH & Admin
+            if (clamped > 80.0) {
+              _sendNoiseDangerAlert(clamped);
+            }
+          }
+        },
+        onError: (err) {
+          debugPrint('[KidMode] NoiseMeter error: $err');
+        },
+      );
+    } catch (e) {
+      debugPrint('[KidMode] Khởi động Micro thất bại: $e');
+    }
+
+    // 3. Kích hoạt Cảm biến Đo khoảng cách mắt thật (Camera AI qua EyeDistanceService)
+    try {
+      _eyeDistanceService = EyeDistanceService();
+      await _eyeDistanceService?.initialize(
+        onUpdate: (distanceCm, isTooClose) {
+          if (!mounted) return;
+          _updateDistance(distanceCm);
+        },
+      );
+    } catch (e) {
+      debugPrint('[KidMode] Khởi động EyeDistanceService thất bại: $e');
+    }
+
+    // 4. Đọc Pin thật và Vị trí GPS thật
+    _updateRealBatteryAndLocation();
+    _sensorPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _updateRealBatteryAndLocation());
+  }
+
+  Future<void> _updateRealBatteryAndLocation() async {
+    // Pin thật
+    try {
+      final battery = Battery();
+      final level = await battery.batteryLevel;
+      if (mounted && level > 0) {
+        setState(() => _battery = level);
+      }
+    } catch (_) {}
+
+    // GPS thật
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.medium),
+      );
+      if (mounted) {
+        setState(() {
+          _lat = pos.latitude;
+          _lng = pos.longitude;
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _sendNoiseDangerAlert(double db) {
+    final now = DateTime.now();
+    if (_lastNoiseAlertSent == null || now.difference(_lastNoiseAlertSent!).inSeconds >= 10) {
+      _lastNoiseAlertSent = now;
+      final alert = AlertLog(
+        id: 0,
+        childProfileId: widget.childId,
+        alertType: 'NOISE_DANGER',
+        value: '${db.round()} dB',
+        severity: 'Danger',
+        message: 'Phát hiện tiếng ồn / la hét bất thường (${db.round()} dB) tại phòng bé ${widget.childName}',
+        createdAt: now,
+      );
+      ChildService.sendAlert(alert);
+    }
   }
 
   Future<void> _loadInitialData() async {
@@ -84,6 +193,9 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _sensorPollTimer?.cancel();
+    _noiseSub?.cancel();
+    _eyeDistanceService?.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -91,6 +203,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
   /// Cập nhật cự ly mắt & cơ chế TỰ ĐỘNG BẬT CẢNH BÁO và TỰ ĐỘNG TẮT KHI AN TOÀN
   void _updateDistance(double cm) {
     if (!mounted) return;
+    debugPrint('[KidMode] Cự ly mắt cập nhật: ${cm.toInt()}cm, Tiếng ồn: $_currentNoiseDb dB, Pin: $_battery%');
     setState(() {
       _distanceCm = cm;
       _currentDistance = '${cm.toInt()} cm';
@@ -116,16 +229,6 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
         if (_isEyeWarningVisible) {
           _isEyeWarningVisible = false;
         }
-      }
-    });
-  }
-
-  /// Thử nghiệm cự ly gần: Tự động đưa cự ly xuống 16cm (bật cảnh báo), sau 4s tự động đưa ra 35cm (tự tắt)
-  void _triggerEyeTestDanger() {
-    _updateDistance(16.0);
-    Future.delayed(const Duration(seconds: 4), () {
-      if (mounted && _distanceCm < 25.0) {
-        _updateDistance(35.0);
       }
     });
   }
@@ -359,6 +462,20 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
               ),
             ),
 
+            // Ẩn Surface CameraPreview 1x1 để đảm bảo Android Camera2 Stream liên tục nhận khung hình chạy ngầm
+            if (_eyeDistanceService?.cameraController != null &&
+                _eyeDistanceService!.cameraController!.value.isInitialized)
+              Positioned(
+                bottom: 0,
+                right: 0,
+                width: 1,
+                height: 1,
+                child: Opacity(
+                  opacity: 0.01,
+                  child: CameraPreview(_eyeDistanceService!.cameraController!),
+                ),
+              ),
+
             // LỚP PHỦ KHÓA TOÀN BỘ KHI PHỤ HUYNH BẬT KHÓA TỪ XA HOẶC NGOÀI GIỜ CHO PHÉP
             if (_isLockedByParent)
               _buildLockedScreenOverlay(),
@@ -368,7 +485,6 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
               EyeCareOverlay(
                 distanceText: _currentDistance,
                 distanceCm: _distanceCm,
-                onDistanceChanged: _updateDistance,
                 onDismiss: () => setState(() => _isEyeWarningVisible = false),
               ),
           ],
@@ -871,7 +987,7 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
             ),
             const SizedBox(height: 14),
 
-            // 3 thông số cảm biến thời gian thực
+            // 3 thông số cảm biến thời gian thực thật từ phần cứng
             Row(
               children: [
                 Expanded(
@@ -894,9 +1010,9 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          _currentDistance,
+                          _distanceCm < 25.0 ? '$_currentDistance (Gần)' : '$_currentDistance (Chuẩn)',
                           style: TextStyle(
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: FontWeight.bold,
                             color: _distanceCm < 25.0 ? Colors.red : Colors.green[700],
                           ),
@@ -925,9 +1041,22 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                           ],
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          '${_currentNoiseDb.toInt()} dB (Êm dịu)',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.teal[700]),
+                        Builder(
+                          builder: (context) {
+                            String noiseStatus = 'Êm dịu';
+                            Color nColor = Colors.teal[700]!;
+                            if (_currentNoiseDb > 80) {
+                              noiseStatus = 'Rất ồn!';
+                              nColor = Colors.red[700]!;
+                            } else if (_currentNoiseDb > 65) {
+                              noiseStatus = 'Ồn vừa';
+                              nColor = Colors.orange[800]!;
+                            }
+                            return Text(
+                              '${_currentNoiseDb.round()} dB ($noiseStatus)',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: nColor),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -942,42 +1071,28 @@ class _KidModeSimulatorScreenState extends State<KidModeSimulatorScreen> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: const Color(0xFFE2E8F0)),
                     ),
-                    child: const Column(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        const Row(
                           children: [
                             Icon(Icons.location_on_rounded, size: 14, color: Color(0xFF2563EB)),
                             SizedBox(width: 4),
                             Text('Vị trí GPS', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
                           ],
                         ),
-                        SizedBox(height: 4),
+                        const SizedBox(height: 4),
                         Text(
-                          'Trực tuyến',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                          (_lat != 0 && _lng != 0)
+                              ? '${_lat.toStringAsFixed(2)}, ${_lng.toStringAsFixed(2)}'
+                              : 'Trực tuyến',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
                         ),
                       ],
                     ),
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 12),
-
-            // Nút kiểm tra cơ chế cảnh báo cự ly mắt tự bật khi <25cm và tự tắt khi >=30cm
-            FilledButton.tonalIcon(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFEF2F2),
-                foregroundColor: const Color(0xFF991B1B),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: _triggerEyeTestDanger,
-              icon: const Icon(Icons.warning_amber_rounded, size: 18),
-              label: const Text(
-                'Thử Nghiệm Mắt Quá Gần (<20cm) -> Tự Bật & Tự Tắt',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-              ),
             ),
           ],
         ),
