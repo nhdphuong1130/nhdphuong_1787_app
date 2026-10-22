@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
+import '../config/config_url.dart';
 import '../services/auth_service.dart';
 import '../services/token_service.dart';
 import 'otp_verification_screen.dart';
@@ -146,11 +147,118 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
+  void _showApiConfigDialog() {
+    final urlCtrl = TextEditingController(text: ConfigUrl.baseUrl);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.settings_ethernet, color: Colors.indigo),
+            SizedBox(width: 8),
+            Text('Cấu Hình Địa Chỉ API', style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Chọn hoặc nhập URL Web API để kết nối:',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: urlCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'API Base URL',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.link),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Gợi ý kết nối nhanh:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  ActionChip(
+                    avatar: const Icon(Icons.cloud_done, size: 14, color: Colors.blue),
+                    label: const Text('Tunnel (Điện thoại thật)', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      urlCtrl.text = 'https://knowing-clicks-ice-financing.trycloudflare.com/api/';
+                    },
+                  ),
+                  ActionChip(
+                    avatar: const Icon(Icons.phone_android, size: 14, color: Colors.green),
+                    label: const Text('Emulator (10.0.2.2)', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      urlCtrl.text = 'http://10.0.2.2:5000/api/';
+                    },
+                  ),
+                  ActionChip(
+                    avatar: const Icon(Icons.wifi, size: 14, color: Colors.orange),
+                    label: const Text('WiFi LAN (10.12.24.140)', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      urlCtrl.text = 'http://10.12.24.140:5000/api/';
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await ConfigUrl.resetToDefault();
+              if (ctx.mounted) Navigator.of(ctx).pop();
+              setState(() {});
+            },
+            child: const Text('Đặt Lại Mặc Định'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              if (urlCtrl.text.isNotEmpty) {
+                await ConfigUrl.setCustomBaseUrl(urlCtrl.text.trim());
+                if (ctx.mounted) Navigator.of(ctx).pop();
+                setState(() {});
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Đã cập nhật URL API thành công: ${ConfigUrl.baseUrl}'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Lưu Cấu Hình'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_ethernet, color: Colors.indigo),
+            tooltip: 'Cấu hình API URL',
+            onPressed: _showApiConfigDialog,
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
