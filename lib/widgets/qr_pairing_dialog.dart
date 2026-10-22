@@ -32,7 +32,7 @@ class QrPairingDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'Bé có thể dùng 1 trong 3 cách sau trên điện thoại của mình để kích hoạt bảo vệ:',
+              'Xuất trình mã này để liên kết máy bé, HOẶC chia sẻ cho Phụ huynh / Người giám sát khác quét để cùng theo dõi & quản lý bảo vệ bé:',
               style: TextStyle(fontSize: 13, color: Colors.grey),
               textAlign: TextAlign.center,
             ),
