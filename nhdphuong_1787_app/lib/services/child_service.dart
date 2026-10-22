@@ -131,4 +131,18 @@ class ChildService {
     );
     return response.statusCode == 200;
   }
+
+  // 5. Gửi Heartbeat chu kỳ định kỳ (Dành cho máy con đồng bộ lệnh khóa từ xa)
+  static Future<Map<String, dynamic>?> sendHeartbeat(int childId, {int battery = 85, double lat = 10.762622, double lng = 106.660172}) async {
+    try {
+      final response = await ApiClient.post(
+        ConfigUrl.heartbeat(childId),
+        body: {'batteryLevel': battery, 'lat': lat, 'lng': lng},
+      );
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
 }
