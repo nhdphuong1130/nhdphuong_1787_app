@@ -82,6 +82,28 @@ namespace nhdphuong_1787_api.Controllers
                 model.PairingCode = new Random().Next(100000, 999999).ToString();
             }
 
+            // Đảm bảo có Username và Password cấp cho bé
+            if (string.IsNullOrWhiteSpace(model.ChildUsername))
+            {
+                var cleanName = new string(model.FullName.ToLower().Where(char.IsLetterOrDigit).ToArray());
+                model.ChildUsername = !string.IsNullOrWhiteSpace(cleanName) 
+                    ? $"{cleanName}1787" 
+                    : $"be{new Random().Next(1000, 9999)}";
+            }
+            else
+            {
+                model.ChildUsername = model.ChildUsername.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(model.ChildPassword))
+            {
+                model.ChildPassword = "Password123@";
+            }
+            else
+            {
+                model.ChildPassword = model.ChildPassword.Trim();
+            }
+
             _context.ChildProfiles.Add(model);
             await _context.SaveChangesAsync();
 
@@ -132,6 +154,12 @@ namespace nhdphuong_1787_api.Controllers
             existing.DeviceModel = model.DeviceModel;
             existing.BatteryLevel = model.BatteryLevel;
             existing.IsOnline = model.IsOnline;
+            if (!string.IsNullOrWhiteSpace(model.ChildUsername))
+                existing.ChildUsername = model.ChildUsername.Trim();
+            if (!string.IsNullOrWhiteSpace(model.ChildPassword))
+                existing.ChildPassword = model.ChildPassword.Trim();
+            if (!string.IsNullOrWhiteSpace(model.PairingCode))
+                existing.PairingCode = model.PairingCode.Trim();
             existing.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
