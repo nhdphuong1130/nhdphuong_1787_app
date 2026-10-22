@@ -364,11 +364,15 @@ namespace nhdphuong_1787_api.Controllers
                 try
                 {
                     var webClientId = _configuration["Google:ClientId"];
-                    var validationSettings = new GoogleJsonWebSignature.ValidationSettings();
-                    if (!string.IsNullOrWhiteSpace(webClientId))
+                    var validationSettings = new GoogleJsonWebSignature.ValidationSettings
                     {
-                        validationSettings.Audience = new[] { webClientId };
-                    }
+                        Audience = new List<string>
+                        {
+                            webClientId ?? "769609857279-66sh2d25cuvb205phs5bbcdti5d1nuct.apps.googleusercontent.com",
+                            "769609857279-66sh2d25cuvb205phs5bbcdti5d1nuct.apps.googleusercontent.com",
+                            "769609857279-nr4htnp61463igfqid2v9mvo986slf8v.apps.googleusercontent.com"
+                        }.Distinct().ToList()
+                    };
 
                     payload = await GoogleJsonWebSignature.ValidateAsync(model.IdToken, validationSettings);
                 }
