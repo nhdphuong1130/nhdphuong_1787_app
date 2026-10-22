@@ -73,6 +73,11 @@ if command -v cloudflared > /dev/null 2>&1; then
     fi
 fi
 
+# 4. Kích hoạt Cloud Bridge cho SIM Gateway (Render Cloud API -> Điện thoại gửi SMS thật)
+if [ -f "$SCRIPT_DIR/bridge_smsgateway.sh" ]; then
+    bash "$SCRIPT_DIR/bridge_smsgateway.sh" > /dev/null 2>&1 &
+fi
+
 echo "========================================================="
 echo "🎉 [Auto-API 1787] Hoàn tất chuẩn bị! Khởi chạy Flutter..."
 echo "========================================================="
