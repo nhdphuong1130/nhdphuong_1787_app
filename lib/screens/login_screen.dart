@@ -439,21 +439,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   runSpacing: 6,
                   children: [
                     ActionChip(
-                      avatar: const Icon(Icons.usb, size: 14, color: Colors.teal),
-                      label: const Text('Cáp USB (127.0.0.1)', style: TextStyle(fontSize: 11)),
+                      avatar: const Icon(Icons.cloud_done_rounded, size: 14, color: Colors.deepPurple),
+                      label: const Text('Render Cloud (24/7)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.deepPurple)),
                       onPressed: () {
                         setDlgState(() {
-                          urlCtrl.text = 'http://127.0.0.1:5000/api/';
+                          urlCtrl.text = ConfigUrl.defaultCloudUrl;
                           testResult = null;
                         });
                       },
                     ),
                     ActionChip(
-                      avatar: const Icon(Icons.cloud_done, size: 14, color: Colors.blue),
-                      label: const Text('Cloudflare Tunnel', style: TextStyle(fontSize: 11)),
+                      avatar: const Icon(Icons.usb, size: 14, color: Colors.teal),
+                      label: const Text('Cáp USB (127.0.0.1)', style: TextStyle(fontSize: 11)),
                       onPressed: () {
                         setDlgState(() {
-                          urlCtrl.text = ConfigUrl.defaultTunnelUrl;
+                          urlCtrl.text = 'http://127.0.0.1:5000/api/';
                           testResult = null;
                         });
                       },

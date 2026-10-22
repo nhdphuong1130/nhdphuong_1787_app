@@ -22,9 +22,49 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   int _selectedChildIndex = 0;
   bool _isLoadingGps = false;
   Timer? _refreshTimer;
+  int _mapStyleIndex = 0; // 0: Google Standard, 1: Google Satellite, 2: CARTO Voyager, 3: OpenStreetMap
 
   // Điểm trường học an toàn mặc định (Trường Tiểu học - TP.HCM)
   final LatLng _safeZoneCenter = const LatLng(10.762622, 106.660172);
+
+  String get _tileUrl {
+    switch (_mapStyleIndex) {
+      case 1:
+        return 'https://mt{s}.google.com/vt/lyrs=y&hl=vi&x={x}&y={y}&z={z}';
+      case 2:
+        return 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png';
+      case 3:
+        return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+      case 0:
+      default:
+        return 'https://mt{s}.google.com/vt/lyrs=m&hl=vi&x={x}&y={y}&z={z}';
+    }
+  }
+
+  List<String> get _subdomains {
+    switch (_mapStyleIndex) {
+      case 2:
+        return const ['a', 'b', 'c', 'd'];
+      case 3:
+        return const [];
+      default:
+        return const ['0', '1', '2', '3'];
+    }
+  }
+
+  String get _currentStyleName {
+    switch (_mapStyleIndex) {
+      case 1:
+        return 'Google Vệ Tinh';
+      case 2:
+        return 'CARTO Voyager';
+      case 3:
+        return 'OpenStreetMap';
+      case 0:
+      default:
+        return 'Google Maps';
+    }
+  }
 
   @override
   void initState() {
@@ -124,8 +164,67 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Vị Trí Của ${activeChild.fullName}'),
+        title: Text(
+          'Vị Trí: ${activeChild.fullName}',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
         actions: [
+          PopupMenuButton<int>(
+            icon: const Icon(Icons.layers_rounded),
+            tooltip: 'Chọn kiểu bản đồ',
+            initialValue: _mapStyleIndex,
+            onSelected: (val) {
+              setState(() => _mapStyleIndex = val);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('🗺️ Đã chuyển sang bản đồ: $_currentStyleName'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 0,
+                child: Row(
+                  children: [
+                    Icon(Icons.map_rounded, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Google Maps (Chuẩn)'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 1,
+                child: Row(
+                  children: [
+                    Icon(Icons.satellite_alt_rounded, color: Colors.green),
+                    SizedBox(width: 8),
+                    Text('Google Vệ Tinh (Hybrid)'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 2,
+                child: Row(
+                  children: [
+                    Icon(Icons.explore_rounded, color: Colors.deepPurple),
+                    SizedBox(width: 8),
+                    Text('CARTO Voyager HD'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 3,
+                child: Row(
+                  children: [
+                    Icon(Icons.public_rounded, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Text('OpenStreetMap'),
+                  ],
+                ),
+              ),
+            ],
+          ),
           IconButton(
             icon: _isLoadingGps
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -140,15 +239,6 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
               await _reloadFromApi();
               _mapController.move(LatLng(activeChild.lastKnownLat, activeChild.lastKnownLng), 16.0);
             },
-          ),
-          IconButton(
-            icon: const Icon(Icons.near_me_rounded, color: Colors.blueAccent),
-            tooltip: 'Mở Google Maps ngay',
-            onPressed: () => MapUtils.openGoogleMaps(
-              activeChild.lastKnownLat,
-              activeChild.lastKnownLng,
-              label: 'Bé ${activeChild.fullName}',
-            ),
           ),
           IconButton(
             icon: const Icon(Icons.my_location),
@@ -167,8 +257,11 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.nhdphuong1787.childguard',
+                key: ValueKey('map_tile_$_mapStyleIndex'),
+                urlTemplate: _tileUrl,
+                subdomains: _subdomains,
+                userAgentPackageName: 'com.nhdphuong1787.nhdphuong_1787_app',
+                maxZoom: 20,
               ),
               // Vòng tròn Vùng An Toàn (Geofencing Safe Zone - 500m)
               CircleLayer(
