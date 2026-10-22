@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:noise_meter/noise_meter.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/alert_log.dart';
 import '../services/child_service.dart';
 
@@ -21,6 +24,104 @@ class _NoiseMeterScreenState extends State<NoiseMeterScreen> {
   String _noiseStatus = 'Môi trường yên tĩnh, an toàn';
   Color _statusColor = Colors.green;
 
+  int _selectedMode = 0; // 0: Nhận từ xa từ máy con, 1: Đo trực tiếp qua Micro máy này
+  Timer? _remotePollTimer;
+  NoiseMeter? _noiseMeter;
+  StreamSubscription<NoiseReading>? _noiseSub;
+  bool _isMicActive = false;
+  String _micStatusText = '📡 Đang kết nối nhận dữ liệu từ xa từ phòng bé...';
+  DateTime? _lastAlertSent;
+
+  @override
+  void initState() {
+    super.initState();
+    _startMode();
+  }
+
+  @override
+  void dispose() {
+    _remotePollTimer?.cancel();
+    _noiseSub?.cancel();
+    super.dispose();
+  }
+
+  void _startMode() {
+    if (_selectedMode == 0) {
+      _noiseSub?.cancel();
+      _isMicActive = false;
+      _micStatusText = '📡 Đang theo dõi trực tiếp âm thanh từ phòng bé ${widget.childName}';
+      _pollRemoteChildNoise();
+      _remotePollTimer?.cancel();
+      _remotePollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollRemoteChildNoise());
+    } else {
+      _remotePollTimer?.cancel();
+      _startMicrophone();
+    }
+  }
+
+  Future<void> _pollRemoteChildNoise() async {
+    try {
+      final children = await ChildService.getChildren();
+      final child = children.firstWhere(
+        (c) => c.id == widget.childId,
+        orElse: () => children.isNotEmpty ? children.first : throw Exception(),
+      );
+      if (mounted) {
+        _updateDecibel(child.currentNoiseDb);
+        setState(() {
+          _micStatusText = '📡 Đang nhận trực tiếp từ máy bé ${child.fullName} (${child.currentNoiseDb.round()} dB)';
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _startMicrophone() async {
+    try {
+      final status = await Permission.microphone.request();
+      if (status.isGranted) {
+        _noiseMeter = NoiseMeter();
+        _noiseSub = _noiseMeter?.noise.listen(
+          (NoiseReading reading) {
+            if (!mounted) return;
+            double db = reading.meanDecibel;
+            if (db.isFinite && !db.isNaN) {
+              db = db.clamp(30.0, 115.0);
+              _updateDecibel(db);
+              if (!_isMicActive) {
+                setState(() {
+                  _isMicActive = true;
+                  _micStatusText = '🎙️ Micro thật đang thu âm môi trường thời gian thực';
+                });
+              }
+            }
+          },
+          onError: (_) {
+            if (mounted) {
+              setState(() {
+                _isMicActive = false;
+                _micStatusText = 'Micro không khả dụng (Máy ảo - Dùng thanh trượt)';
+              });
+            }
+          },
+        );
+      } else {
+        if (mounted) {
+          setState(() {
+            _isMicActive = false;
+            _micStatusText = 'Chưa cấp quyền Micro (Có thể kéo thanh trượt bên dưới)';
+          });
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isMicActive = false;
+          _micStatusText = 'Đang chạy chế độ mô phỏng âm lượng';
+        });
+      }
+    }
+  }
+
   void _updateDecibel(double value) {
     setState(() {
       _currentDecibel = value;
@@ -36,18 +137,22 @@ class _NoiseMeterScreenState extends State<NoiseMeterScreen> {
       }
     });
 
-    // Nếu vượt ngưỡng 80 dB, tự động gửi cảnh báo lên Server
+    // Nếu vượt ngưỡng 80 dB, tự động gửi cảnh báo lên Server (chặn spam: tối thiểu cách 5s một lần)
     if (value > 80) {
-      final alert = AlertLog(
-        id: 0,
-        childProfileId: widget.childId,
-        alertType: 'NOISE_DANGER',
-        value: '${value.round()} dB',
-        severity: 'Danger',
-        message: 'Phát hiện tiếng ồn nguy hiểm (${value.round()} dB) tại phòng bé ${widget.childName}',
-        createdAt: DateTime.now(),
-      );
-      ChildService.sendAlert(alert);
+      final now = DateTime.now();
+      if (_lastAlertSent == null || now.difference(_lastAlertSent!).inSeconds >= 5) {
+        _lastAlertSent = now;
+        final alert = AlertLog(
+          id: 0,
+          childProfileId: widget.childId,
+          alertType: 'NOISE_DANGER',
+          value: '${value.round()} dB',
+          severity: 'Danger',
+          message: 'Phát hiện tiếng ồn nguy hiểm (${value.round()} dB) tại phòng bé ${widget.childName}',
+          createdAt: now,
+        );
+        ChildService.sendAlert(alert);
+      }
     }
   }
 
@@ -57,12 +162,71 @@ class _NoiseMeterScreenState extends State<NoiseMeterScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Đo Tiếng Ồn Xung Quanh: ${widget.childName}'),
+        title: Text('Đo Tiếng Ồn: ${widget.childName}'),
+        actions: [
+          IconButton(
+            icon: Icon(_isMicActive ? Icons.mic : Icons.mic_off, color: _isMicActive ? Colors.greenAccent : Colors.white70),
+            tooltip: _isMicActive ? 'Micro đang bật' : 'Bật lại micro',
+            onPressed: () {
+              _noiseSub?.cancel();
+              _startMicrophone();
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
+            // Chọn chế độ: Nghe từ xa từ phòng con vs Đo trực tiếp micro máy này
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(
+                  value: 0,
+                  icon: Icon(Icons.wifi_tethering),
+                  label: Text('📡 Từ Xa (Phòng Con)'),
+                ),
+                ButtonSegment(
+                  value: 1,
+                  icon: Icon(Icons.mic),
+                  label: Text('🎙️ Tại Chỗ (Máy Này)'),
+                ),
+              ],
+              selected: {_selectedMode},
+              onSelectionChanged: (Set<int> newSelection) {
+                setState(() => _selectedMode = newSelection.first);
+                _startMode();
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Banner báo trạng thái Micro thật hay giả lập
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: _isMicActive ? Colors.green[50] : Colors.amber[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _isMicActive ? Colors.green : Colors.amber),
+              ),
+              child: Row(
+                children: [
+                  Icon(_isMicActive ? Icons.sensors : Icons.tune, size: 20, color: _isMicActive ? Colors.green[800] : Colors.brown),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _micStatusText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: _isMicActive ? Colors.green[900] : Colors.brown,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             Card(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               elevation: 4,
@@ -107,7 +271,7 @@ class _NoiseMeterScreenState extends State<NoiseMeterScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
             // Thanh thang đo chuẩn Decibel
             Card(
@@ -145,9 +309,9 @@ class _NoiseMeterScreenState extends State<NoiseMeterScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-            // Thanh trượt mô phỏng tiếng ồn cho Thầy cô test
+            // Thanh trượt điều chỉnh phụ trợ (cho phép test trên máy ảo không có mic)
             Card(
               color: Colors.blue[50],
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -161,14 +325,14 @@ class _NoiseMeterScreenState extends State<NoiseMeterScreen> {
                         Icon(Icons.tune, color: Colors.blueAccent),
                         SizedBox(width: 8),
                         Text(
-                          'Thanh Điều Chỉnh Giả Lập Mức Âm Lượng (Test)',
+                          'Thanh Giả Lập / Can Thiệp Thủ Công (Test Máy Ảo)',
                           style: TextStyle(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Kéo thanh trượt để thử nghiệm phản ứng hệ thống trên máy ảo:',
+                      'Nếu chạy trên máy ảo không có Micro thật, kéo thanh trượt để thử nghiệm cảnh báo:',
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                     Slider(

@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/child_profile.dart';
+import '../services/child_service.dart';
+import '../utils/map_utils.dart';
 
 class LiveMapScreen extends StatefulWidget {
   final List<ChildProfile> children;
@@ -16,6 +20,8 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   final MapController _mapController = MapController();
   late List<ChildProfile> _children;
   int _selectedChildIndex = 0;
+  bool _isLoadingGps = false;
+  Timer? _refreshTimer;
 
   // Điểm trường học an toàn mặc định (Trường Tiểu học - TP.HCM)
   final LatLng _safeZoneCenter = const LatLng(10.762622, 106.660172);
@@ -24,6 +30,61 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
   void initState() {
     super.initState();
     _children = List.from(widget.children);
+    // Tự động làm mới vị trí từ máy chủ mỗi 5 giây
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => _reloadFromApi());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _reloadFromApi() async {
+    try {
+      final updated = await ChildService.getChildren();
+      if (updated.isNotEmpty && mounted) {
+        setState(() {
+          _children = updated;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _locateCurrentDevice() async {
+    setState(() => _isLoadingGps = true);
+    try {
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+
+      if (perm == LocationPermission.whileInUse || perm == LocationPermission.always) {
+        final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 5),
+          ),
+        );
+        _mapController.move(LatLng(pos.latitude, pos.longitude), 16.5);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('📍 Đã định vị vị trí hiện tại: (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không thể lấy GPS: $e'), backgroundColor: Colors.orange),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingGps = false);
+    }
   }
 
   void _simulateMovement() {
@@ -65,6 +126,30 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
       appBar: AppBar(
         title: Text('Vị Trí Của ${activeChild.fullName}'),
         actions: [
+          IconButton(
+            icon: _isLoadingGps
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.gps_fixed),
+            tooltip: 'Định vị GPS thiết bị này',
+            onPressed: _locateCurrentDevice,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Cập nhật từ máy con',
+            onPressed: () async {
+              await _reloadFromApi();
+              _mapController.move(LatLng(activeChild.lastKnownLat, activeChild.lastKnownLng), 16.0);
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.near_me_rounded, color: Colors.blueAccent),
+            tooltip: 'Mở Google Maps ngay',
+            onPressed: () => MapUtils.openGoogleMaps(
+              activeChild.lastKnownLat,
+              activeChild.lastKnownLng,
+              label: 'Bé ${activeChild.fullName}',
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.my_location),
             tooltip: 'Căn giữa vị trí bé',
@@ -193,6 +278,16 @@ class _LiveMapScreenState extends State<LiveMapScreen> {
                               },
                             ),
                           ),
+                        const SizedBox(width: 8),
+                        FilledButton.tonalIcon(
+                          onPressed: () => MapUtils.openGoogleMaps(
+                            activeChild.lastKnownLat,
+                            activeChild.lastKnownLng,
+                            label: 'Bé ${activeChild.fullName}',
+                          ),
+                          icon: const Icon(Icons.near_me_rounded, size: 18),
+                          label: const Text('Bật Google Maps'),
+                        ),
                         const SizedBox(width: 8),
                         FilledButton.icon(
                           onPressed: _simulateMovement,

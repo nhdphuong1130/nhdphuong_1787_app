@@ -69,10 +69,11 @@ class _AppRuleDialogState extends State<AppRuleDialog> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: status,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Mức độ giới hạn'),
                   items: const [
-                    DropdownMenuItem(value: 'Blocked', child: Text('🚫 Chặn hoàn toàn')),
-                    DropdownMenuItem(value: 'Limited', child: Text('⏳ Giới hạn số phút/ngày')),
+                    DropdownMenuItem(value: 'Blocked', child: Text('🚫 Chặn (Khóa app)')),
+                    DropdownMenuItem(value: 'Limited', child: Text('⏳ Giới hạn thời gian')),
                     DropdownMenuItem(value: 'Allowed', child: Text('✅ Cho phép sử dụng')),
                   ],
                   onChanged: (val) => setDlgState(() => status = val!),
@@ -124,6 +125,78 @@ class _AppRuleDialogState extends State<AppRuleDialog> {
     );
   }
 
+  Future<void> _showEditRuleDialog(AppRule rule) async {
+    String status = rule.status;
+    int minutes = rule.dailyLimitMinutes > 0 ? rule.dailyLimitMinutes : 45;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          title: Text('Chỉnh Sửa Quy Tắc: ${rule.appName}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: status,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Mức độ giới hạn'),
+                  items: const [
+                    DropdownMenuItem(value: 'Blocked', child: Text('🚫 Chặn (Khóa app)')),
+                    DropdownMenuItem(value: 'Limited', child: Text('⏳ Giới hạn thời gian')),
+                    DropdownMenuItem(value: 'Allowed', child: Text('✅ Cho phép sử dụng')),
+                  ],
+                  onChanged: (val) => setDlgState(() => status = val!),
+                ),
+                if (status == 'Limited') ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('Giới hạn: '),
+                      Expanded(
+                        child: Slider(
+                          value: minutes.toDouble(),
+                          min: 15,
+                          max: 180,
+                          divisions: 11,
+                          label: '$minutes phút',
+                          onChanged: (v) => setDlgState(() => minutes = v.round()),
+                        ),
+                      ),
+                      Text('$minutes ph'),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Hủy')),
+            FilledButton(
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                rule.status = status;
+                rule.dailyLimitMinutes = status == 'Blocked' ? 0 : minutes;
+                await ChildService.updateRule(rule.id, rule);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Đã cập nhật: ${rule.appName} -> ${status == "Blocked" ? "Khóa app" : (status == "Limited" ? "Giới hạn $minutes ph" : "Cho phép")}'),
+                      backgroundColor: status == 'Blocked' ? Colors.red[700] : const Color(0xFF059669),
+                    ),
+                  );
+                }
+                _loadRules();
+              },
+              child: const Text('Cập Nhật'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog.fullscreen(
@@ -167,55 +240,69 @@ class _AppRuleDialogState extends State<AppRuleDialog> {
 
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                backgroundColor: isBlocked
-                                    ? Colors.red[100]
-                                    : (isLimited ? Colors.amber[100] : Colors.green[100]),
-                                child: Icon(
-                                  isBlocked
-                                      ? Icons.block
-                                      : (isLimited ? Icons.timer : Icons.check),
-                                  color: isBlocked
-                                      ? Colors.red
-                                      : (isLimited ? Colors.amber[800] : Colors.green),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () => _showEditRuleDialog(rule),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  backgroundColor: isBlocked
+                                      ? Colors.red[100]
+                                      : (isLimited ? Colors.amber[100] : Colors.green[100]),
+                                  child: Icon(
+                                    isBlocked
+                                        ? Icons.block
+                                        : (isLimited ? Icons.timer : Icons.check),
+                                    color: isBlocked
+                                        ? Colors.red
+                                        : (isLimited ? Colors.amber[800] : Colors.green),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      rule.appName,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${rule.category} • ${isBlocked ? "Đã chặn" : (isLimited ? "Tối đa ${rule.dailyLimitMinutes} phút/ngày" : "Không giới hạn")}',
-                                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                                    ),
-                                  ],
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Text(
+                                            rule.appName,
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          const Icon(Icons.edit, size: 12, color: Colors.grey),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${rule.category} • ${isBlocked ? "🚫 Đã chặn" : (isLimited ? "⏳ Tối đa ${rule.dailyLimitMinutes} phút/ngày" : "✅ Không giới hạn")}',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: isBlocked ? FontWeight.bold : FontWeight.normal,
+                                          color: isBlocked ? Colors.red[700] : Colors.grey[700],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Switch(
-                                value: rule.isActive,
-                                onChanged: (v) async {
-                                  await ChildService.toggleRule(rule.id);
-                                  _loadRules();
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.grey),
-                                onPressed: () async {
-                                  await ChildService.deleteRule(rule.id);
-                                  _loadRules();
-                                },
-                              ),
-                            ],
+                                Switch(
+                                  value: rule.isActive,
+                                  onChanged: (v) async {
+                                    await ChildService.toggleRule(rule.id);
+                                    _loadRules();
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.grey),
+                                  onPressed: () async {
+                                    await ChildService.deleteRule(rule.id);
+                                    _loadRules();
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );

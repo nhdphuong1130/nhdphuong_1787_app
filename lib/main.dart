@@ -1,10 +1,49 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'config/config_url.dart';
 import 'screens/login_screen.dart';
 
+Future<void> _autoStartApiOnDesktop() async {
+  if (kIsWeb) return;
+  if (!Platform.isLinux && !Platform.isMacOS && !Platform.isWindows) return;
+
+  try {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(milliseconds: 800);
+    final req = await client.getUrl(Uri.parse('http://127.0.0.1:5000/api/Authenticate/login'));
+    final resp = await req.close();
+    client.close();
+    if (resp.statusCode != 0) {
+      debugPrint('✅ [Desktop Host] Backend API đã chạy tại http://127.0.0.1:5000');
+      return;
+    }
+  } catch (_) {
+    try {
+      debugPrint('🚀 [Desktop Host] Tự động khởi động ASP.NET Core API ngầm...');
+      final script = File('start_api.sh');
+      if (await script.exists()) {
+        await Process.start('/bin/bash', [script.absolute.path], mode: ProcessStartMode.detached);
+      } else {
+        final parentScript = File('../start_api.sh');
+        if (await parentScript.exists()) {
+          await Process.start('/bin/bash', [parentScript.absolute.path], mode: ProcessStartMode.detached);
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Desktop Host] Không thể tự động chạy start_api.sh: $e');
+    }
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Tự động kích hoạt Backend API nếu chạy trên môi trường Desktop
+  if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+    _autoStartApiOnDesktop();
+  }
 
   // Load cấu hình BASE_URL từ file .env
   try {
