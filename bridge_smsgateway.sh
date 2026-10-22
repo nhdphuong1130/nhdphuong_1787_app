@@ -4,13 +4,24 @@
 # Giúp Render Cloud API bắn tin nhắn SMS OTP thật qua điện thoại
 # ==============================================================================
 
-SMSGATE_LOCAL="http://192.168.1.219:8080"
 LOG_FILE="/tmp/smsgate_cloudflared.log"
 RENDER_API="https://nhdphuong-1787-api.onrender.com/api/Authenticate/smsgateway-url"
 
-echo "📱 Đang kiểm tra SIM Gateway trên điện thoại ($SMSGATE_LOCAL)..."
-if ! curl -s -m 2 -u "sms:0vzi2T1_" "$SMSGATE_LOCAL/" | grep -q "status"; then
-    echo "⚠️ Không kết nối được SIM Gateway tại $SMSGATE_LOCAL. Vui lòng đảm bảo điện thoại bật app SMS Gateway và cùng mạng WiFi."
+# 1. Ưu tiên mở ADB forward nếu cắm cáp USB (Điện thoại hoàn toàn không cần bật WiFi)
+if command -v adb > /dev/null 2>&1; then
+    adb forward tcp:8080 tcp:8080 > /dev/null 2>&1
+fi
+
+# 2. Tự động phát hiện cổng kết nối (qua cáp USB hoặc qua WiFi LAN)
+if curl -s -m 2 -u "sms:0vzi2T1_" "http://127.0.0.1:8080/" | grep -q "status"; then
+    SMSGATE_LOCAL="http://127.0.0.1:8080"
+    echo "📱 Đã kết nối SIM Gateway qua cáp USB (127.0.0.1:8080) - Không cần bật WiFi!"
+elif curl -s -m 2 -u "sms:0vzi2T1_" "http://192.168.1.219:8080/" | grep -q "status"; then
+    SMSGATE_LOCAL="http://192.168.1.219:8080"
+    echo "📱 Đã kết nối SIM Gateway qua mạng WiFi LAN (192.168.1.219:8080)"
+else
+    SMSGATE_LOCAL="http://127.0.0.1:8080"
+    echo "⚠️ Chưa thấy phản hồi từ SIM Gateway. Vui lòng kiểm tra app SMS Gateway trên máy."
 fi
 
 # Khởi chạy cloudflared nếu chưa chạy
